@@ -1,0 +1,23 @@
+---
+name: compliance-windows-stig
+display_name: "Windows Server DISA STIG Compliance"
+description: >-
+  Compliance profile for Windows Server DISA STIG enforcement and auditing.
+  Supports Windows Server 2019 (V3R7), 2022 (V2R7), and 2025 (V1R0-1).
+frameworks:
+  - DISA_STIG
+applicable_os:
+  - windows_server_2019
+  - windows_server_2022
+  - windows_server_2025
+source_collection: infra.windows_ops
+content_role: windows_manage_stig
+wrapper_collection: security.compliance_windows
+normalizer_role: normalize_stig_findings
+scanner_options:
+  - ansible
+  - powerstig
+playbooks:
+  scan: playbooks/scan-windows-stig.yml
+  remediate: playbooks/remediate-windows-stig.yml
+  verify: playbooks/verify-windows-stig.yml

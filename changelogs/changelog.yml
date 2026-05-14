@@ -1,0 +1,13 @@
+---
+ancestor: null
+releases:
+  1.0.0:
+    release_date: "2026-05-14"
+    changes:
+      release_summary: >-
+        Initial release of the security.compliance_windows collection.
+        Provides compliance profile wrappers for DISA STIG and CIS Benchmarks
+        on Windows Server 2019/2022/2025 using infra.windows_ops as the
+        content engine. Includes CFF output normalization, pipeline playbooks,
+        EE profiles, PowerSTIG scanner option, and compliance_gather for
+        Track A pre-assessment.

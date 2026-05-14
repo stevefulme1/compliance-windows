@@ -1,0 +1,20 @@
+---
+- name: Gather compliance data in single WinRM round-trip
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/Gather-ComplianceData.ps1') }}"
+    parameters:
+      RegistryPaths: "{{ compliance_gather_registry_paths }}"
+      IncludeSecurityPolicies: "{{ compliance_gather_security_policies }}"
+      IncludeAuditPolicies: "{{ compliance_gather_audit_policies }}"
+      IncludeServices: "{{ compliance_gather_services }}"
+  register: compliance_gather_raw
+  tags:
+    - gather
+    - compliance
+
+- name: Parse gathered compliance data
+  ansible.builtin.set_fact:
+    compliance_windows_gathered: "{{ compliance_gather_raw.output | from_json }}"
+  tags:
+    - gather
+    - compliance

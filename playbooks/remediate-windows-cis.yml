@@ -1,0 +1,15 @@
+---
+- name: "Remediate Windows Server CIS Benchmark findings"
+  hosts: "{{ compliance_target_hosts | default('windows') }}"
+  gather_facts: true
+
+  tasks:
+    - name: Run CIS remediation
+      ansible.builtin.include_role:
+        name: infra.windows_ops.windows_manage_cis
+      vars:
+        windows_manage_cis_skip_rules: "{{ compliance_skip_rules | default([]) }}"
+        windows_manage_cis_only_rules: "{{ compliance_only_rules | default([]) }}"
+        windows_manage_cis_profile: "{{ compliance_cis_profile | default('Level 1') }}"
+        windows_manage_cis_generate_report: true
+        windows_manage_cis_fail_on_non_compliance: "{{ compliance_fail_on_non_compliance | default(false) }}"

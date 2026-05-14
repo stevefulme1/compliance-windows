@@ -1,0 +1,6 @@
+---
+compliance_gather_registry_paths: []
+compliance_gather_security_policies: true
+compliance_gather_audit_policies: true
+compliance_gather_services: true
+compliance_gather_firewall_rules: false

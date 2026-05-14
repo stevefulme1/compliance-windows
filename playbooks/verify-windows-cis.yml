@@ -1,0 +1,35 @@
+---
+- name: "Verify Windows Server CIS Benchmark compliance after remediation"
+  hosts: "{{ compliance_target_hosts | default('windows') }}"
+  gather_facts: true
+  check_mode: true
+
+  vars:
+    windows_manage_cis_generate_report: true
+    windows_manage_cis_report_in_check_mode: true
+
+  tasks:
+    - name: Re-scan CIS compliance
+      ansible.builtin.include_role:
+        name: infra.windows_ops.windows_manage_cis
+      vars:
+        windows_manage_cis_skip_rules: "{{ compliance_skip_rules | default([]) }}"
+        windows_manage_cis_only_rules: "{{ compliance_only_rules | default([]) }}"
+        windows_manage_cis_profile: "{{ compliance_cis_profile | default('Level 1') }}"
+
+    - name: Normalize verification findings to CFF
+      ansible.builtin.include_role:
+        name: security.compliance_windows.normalize_cis_findings
+      vars:
+        normalize_cis_source_results: "{{ windows_manage_cis_results | default([]) }}"
+        normalize_cis_scan_id: "{{ compliance_scan_id | default(ansible_date_time.iso8601_basic_short) }}"
+        normalize_cis_scan_type: verification
+
+    - name: Assert compliance threshold met
+      ansible.builtin.assert:
+        that:
+          - compliance_cff_summary.pass_rate >= (compliance_threshold | default(95) | float)
+        fail_msg: >-
+          Compliance score {{ compliance_cff_summary.pass_rate }}% is below
+          threshold {{ compliance_threshold | default(95) }}%
+      when: compliance_enforce_threshold | default(false) | bool

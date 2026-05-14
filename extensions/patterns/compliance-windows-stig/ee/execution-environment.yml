@@ -1,0 +1,12 @@
+---
+version: 3
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform-27/ee-minimal-rhel9:latest
+dependencies:
+  galaxy: requirements.yml
+  python:
+    - pywinrm>=0.4.3
+    - requests-credssp>=2.0.0
+    - requests-ntlm>=1.2.0
+  system: []

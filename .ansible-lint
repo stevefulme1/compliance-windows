@@ -1,0 +1,13 @@
+---
+profile: production
+
+exclude_paths:
+  - .git
+  - .github
+  - tests/output
+
+skip_list:
+  - experimental
+  - fqcn[action-core]
+
+offline: true

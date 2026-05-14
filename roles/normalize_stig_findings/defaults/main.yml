@@ -1,0 +1,6 @@
+---
+normalize_stig_source_results: []
+normalize_stig_scan_id: ""
+normalize_stig_scan_type: scan
+normalize_stig_output_path: /tmp/compliance/cff
+normalize_stig_framework: DISA_STIG

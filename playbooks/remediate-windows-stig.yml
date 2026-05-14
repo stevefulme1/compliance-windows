@@ -1,0 +1,14 @@
+---
+- name: "Remediate Windows Server DISA STIG findings"
+  hosts: "{{ compliance_target_hosts | default('windows') }}"
+  gather_facts: true
+
+  tasks:
+    - name: Run STIG remediation
+      ansible.builtin.include_role:
+        name: infra.windows_ops.windows_manage_stig
+      vars:
+        windows_manage_stig_skip_rules: "{{ compliance_skip_rules | default([]) }}"
+        windows_manage_stig_only_rules: "{{ compliance_only_rules | default([]) }}"
+        windows_manage_stig_generate_report: true
+        windows_manage_stig_fail_on_non_compliance: "{{ compliance_fail_on_non_compliance | default(false) }}"

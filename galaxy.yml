@@ -1,0 +1,33 @@
+---
+namespace: security
+name: compliance_windows
+version: 1.0.0
+readme: README.md
+authors:
+  - Steve Fulmer <sfulmer@redhat.com>
+description: >-
+  Compliance profile wrapper for Windows Server DISA STIG and CIS Benchmarks.
+  Provides pipeline-oriented playbooks, Common Findings Format (CFF) output
+  normalization, EE profiles, and Backstage/RHDH discovery metadata.
+  Uses infra.windows_ops as the content engine.
+license_file: LICENSE
+tags:
+  - windows
+  - security
+  - compliance
+  - stig
+  - cis
+  - hardening
+  - infrastructure
+repository: https://github.com/stevefulme1/compliance-windows
+documentation: https://github.com/stevefulme1/compliance-windows
+issues: https://github.com/stevefulme1/compliance-windows/issues
+dependencies:
+  infra.windows_ops: ">=2.0.1"
+  ansible.windows: ">=2.0.0"
+build_ignore:
+  - .git
+  - .github
+  - .gitignore
+  - tests
+  - "*.tar.gz"

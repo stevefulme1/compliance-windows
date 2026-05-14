@@ -1,0 +1,10 @@
+---
+collections:
+  - name: security.compliance_windows
+    version: ">=1.0.0"
+  - name: infra.windows_ops
+    version: ">=2.0.1"
+  - name: ansible.windows
+    version: ">=2.0.0"
+  - name: community.windows
+    version: ">=3.0.0"

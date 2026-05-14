@@ -1,0 +1,85 @@
+---
+- name: Verify PowerSTIG module is available
+  ansible.windows.win_powershell:
+    script: |
+      if (-not (Get-Module -ListAvailable -Name PowerSTIG)) {
+        throw "PowerSTIG module is not installed. Install with: Install-Module -Name PowerSTIG -Force"
+      }
+      (Get-Module -ListAvailable -Name PowerSTIG).Version.ToString()
+  register: powerstig_version_check
+  tags:
+    - powerstig
+
+- name: Run PowerSTIG DSC compliance scan
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module PowerSTIG
+
+      $osVersion = (Get-CimInstance Win32_OperatingSystem).Caption
+      $stigVersion = "{{ normalize_powerstig_stig_version }}"
+
+      if ($osVersion -match "2022") {
+          $results = Get-DscComplianceReport -OsVersion "2022" -StigVersion $stigVersion
+      } elseif ($osVersion -match "2019") {
+          $results = Get-DscComplianceReport -OsVersion "2019" -StigVersion $stigVersion
+      } elseif ($osVersion -match "2025") {
+          $results = Get-DscComplianceReport -OsVersion "2025" -StigVersion $stigVersion
+      }
+
+      $results | ConvertTo-Json -Depth 10
+  register: powerstig_raw_results
+  tags:
+    - powerstig
+    - scan
+
+- name: Parse PowerSTIG results
+  ansible.builtin.set_fact:
+    powerstig_parsed: "{{ powerstig_raw_results.output | from_json }}"
+  tags:
+    - powerstig
+
+- name: Transform PowerSTIG results to CFF
+  ansible.builtin.set_fact:
+    compliance_cff_output:
+      schema_version: "1.0.0"
+      scan_id: "{{ normalize_powerstig_scan_id }}"
+      scan_type: "{{ normalize_powerstig_scan_type }}"
+      framework: "{{ normalize_powerstig_framework }}"
+      benchmark: "PowerSTIG DISA STIG"
+      benchmark_version: "{{ powerstig_version_check.output | trim }}"
+      target_host: "{{ inventory_hostname }}"
+      target_os: "Windows Server {{ ansible_distribution_version | default('unknown') }}"
+      scan_timestamp: "{{ ansible_date_time.iso8601 }}"
+      scanner: powerstig
+      findings: >-
+        {{
+          powerstig_parsed | default([]) | map('security.compliance_windows.to_cff_powerstig') | list
+        }}
+  tags:
+    - powerstig
+    - normalize
+
+- name: Compute CFF summary
+  ansible.builtin.set_fact:
+    compliance_cff_summary:
+      total: "{{ compliance_cff_output.findings | length }}"
+      passed: "{{ compliance_cff_output.findings | selectattr('status', 'equalto', 'pass') | list | length }}"
+      failed: "{{ compliance_cff_output.findings | selectattr('status', 'equalto', 'fail') | list | length }}"
+      pass_rate: >-
+        {{
+          ((compliance_cff_output.findings | selectattr('status', 'equalto', 'pass') | list | length)
+          / (compliance_cff_output.findings | length | int)) * 100
+          if (compliance_cff_output.findings | length | int) > 0 else 0
+        }}
+  tags:
+    - powerstig
+    - normalize
+
+- name: Write CFF JSON
+  ansible.windows.win_copy:
+    content: "{{ compliance_cff_output | to_nice_json }}"
+    dest: "{{ normalize_powerstig_output_path }}/cff-powerstig-{{ normalize_powerstig_scan_id }}.json"
+  check_mode: false
+  tags:
+    - powerstig
+    - reporting

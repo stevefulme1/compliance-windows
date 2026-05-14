@@ -1,0 +1,4 @@
+---
+compliance_evaluate_gathered_facts: "{{ compliance_windows_gathered | default({}) }}"
+compliance_evaluate_rules_path: ""
+compliance_evaluate_framework: DISA_STIG

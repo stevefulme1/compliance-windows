@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  author: Steve Fulmer
+  description: Gather Windows compliance data in a single WinRM round-trip
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Windows
+      versions:
+        - "2019"
+        - "2022"
+        - "2025"
+  galaxy_tags:
+    - compliance
+    - windows
+    - audit
+dependencies: []

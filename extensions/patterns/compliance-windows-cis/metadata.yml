@@ -1,0 +1,20 @@
+---
+name: compliance-windows-cis
+display_name: "Windows Server CIS Benchmark Compliance"
+description: >-
+  Compliance profile for Windows Server CIS Benchmarks enforcement and auditing.
+  Supports Level 1 and Level 2 profiles for Windows Server 2019, 2022, and 2025.
+frameworks:
+  - CIS
+applicable_os:
+  - windows_server_2019
+  - windows_server_2022
+  - windows_server_2025
+source_collection: infra.windows_ops
+content_role: windows_manage_cis
+wrapper_collection: security.compliance_windows
+normalizer_role: normalize_cis_findings
+playbooks:
+  scan: playbooks/scan-windows-cis.yml
+  remediate: playbooks/remediate-windows-cis.yml
+  verify: playbooks/verify-windows-cis.yml
