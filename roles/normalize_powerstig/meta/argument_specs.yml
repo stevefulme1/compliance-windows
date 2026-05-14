@@ -1,0 +1,25 @@
+---
+argument_specs:
+  main:
+    short_description: Run PowerSTIG scan and normalize to CFF
+    options:
+      normalize_powerstig_output_path:
+        description: Directory path for CFF JSON output
+        type: path
+        default: /tmp/compliance/cff
+      normalize_powerstig_scan_id:
+        description: Unique identifier for this scan
+        type: str
+        required: true
+      normalize_powerstig_scan_type:
+        description: Type of scan operation
+        type: str
+        default: scan
+      normalize_powerstig_framework:
+        description: Compliance framework identifier
+        type: str
+        default: DISA_STIG
+      normalize_powerstig_stig_version:
+        description: PowerSTIG STIG version to scan against
+        type: str
+        default: ""

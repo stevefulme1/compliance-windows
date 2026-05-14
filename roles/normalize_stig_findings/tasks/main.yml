@@ -1,16 +1,4 @@
 ---
-- name: Transform STIG results to Common Findings Format
-  ansible.builtin.set_fact:
-    compliance_cff_findings: >-
-      {{
-        normalize_stig_source_results | map('community.general.dict_merge', {})
-        | list
-        | map('ansible.builtin.combine', {})
-        | list
-      }}
-  tags:
-    - normalize
-
 - name: Build CFF document
   ansible.builtin.set_fact:
     compliance_cff_output:

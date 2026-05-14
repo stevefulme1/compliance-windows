@@ -1,5 +1,7 @@
 """Filters to transform compliance results to Common Findings Format (CFF)."""
 
+import json
+
 _STATUS_MAP = {
     "PASS": "pass",
     "FAIL": "fail",
@@ -13,6 +15,30 @@ _SEVERITY_MAP = {
     "CAT II": "CAT_II",
     "CAT III": "CAT_III",
 }
+
+_EMPTY_FINDING = {
+    "ruleId": "",
+    "title": "",
+    "description": "",
+    "status": "error",
+    "severity": "",
+    "category": "",
+    "section": "",
+    "actualValue": "",
+    "expectedValue": "",
+    "checkType": "automated",
+}
+
+
+def _safe_str(value):
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 class FilterModule:
@@ -28,6 +54,8 @@ class FilterModule:
     @staticmethod
     def to_cff_stig(result):
         """Transform a single STIG result dict to CFF format."""
+        if not result or not isinstance(result, dict):
+            return _EMPTY_FINDING
         raw_status = result.get("status", "MANUAL")
         return {
             "ruleId": result.get("stig_id", ""),
@@ -39,8 +67,8 @@ class FilterModule:
             ),
             "category": result.get("category", ""),
             "section": result.get("section", ""),
-            "actualValue": str(result.get("current_value", "")),
-            "expectedValue": str(
+            "actualValue": _safe_str(result.get("current_value", "")),
+            "expectedValue": _safe_str(
                 result.get("expected_value", result.get("value", ""))
             ),
             "checkType": result.get("check_type", "automated"),
@@ -49,6 +77,8 @@ class FilterModule:
     @staticmethod
     def to_cff_cis(result):
         """Transform a single CIS result dict to CFF format."""
+        if not result or not isinstance(result, dict):
+            return _EMPTY_FINDING
         raw_status = result.get("status", "MANUAL")
         return {
             "ruleId": result.get("cis_id", result.get("rule_id", "")),
@@ -58,8 +88,8 @@ class FilterModule:
             "severity": result.get("level", result.get("profile", "")),
             "category": result.get("category", result.get("section", "")),
             "section": result.get("section", ""),
-            "actualValue": str(result.get("current_value", "")),
-            "expectedValue": str(
+            "actualValue": _safe_str(result.get("current_value", "")),
+            "expectedValue": _safe_str(
                 result.get("expected_value", result.get("value", ""))
             ),
             "checkType": result.get("check_type", "automated"),
@@ -68,6 +98,8 @@ class FilterModule:
     @staticmethod
     def to_cff_powerstig(result):
         """Transform a PowerSTIG DSC result to CFF format."""
+        if not result or not isinstance(result, dict):
+            return _EMPTY_FINDING
         powerstig_status = {
             "True": "pass",
             "False": "fail",
@@ -87,8 +119,8 @@ class FilterModule:
             "section": result.get(
                 "DscResource", result.get("dscResource", "")
             ),
-            "actualValue": str(result.get("ActualValue", "")),
-            "expectedValue": str(result.get("ExpectedValue", "")),
+            "actualValue": _safe_str(result.get("ActualValue", "")),
+            "expectedValue": _safe_str(result.get("ExpectedValue", "")),
             "checkType": "automated",
             "scanner": "powerstig",
         }

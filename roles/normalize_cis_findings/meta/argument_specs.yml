@@ -1,0 +1,29 @@
+---
+argument_specs:
+  main:
+    short_description: Normalize CIS results to Common Findings Format
+    options:
+      normalize_cis_source_results:
+        description: Raw CIS scan results from infra.windows_ops
+        type: list
+        elements: dict
+        required: true
+      normalize_cis_scan_id:
+        description: Unique identifier for this scan
+        type: str
+        required: true
+      normalize_cis_scan_type:
+        description: Type of scan operation
+        type: str
+        default: scan
+        choices:
+          - scan
+          - verification
+      normalize_cis_output_path:
+        description: Directory path for CFF JSON output
+        type: path
+        default: /tmp/compliance/cff
+      normalize_cis_framework:
+        description: Compliance framework identifier
+        type: str
+        default: CIS

@@ -1,0 +1,26 @@
+---
+argument_specs:
+  main:
+    short_description: Gather Windows compliance data in a single WinRM round-trip
+    options:
+      compliance_gather_registry_paths:
+        description: List of registry paths to collect values from
+        type: list
+        elements: str
+        default: []
+      compliance_gather_security_policies:
+        description: Collect security policies via secedit
+        type: bool
+        default: true
+      compliance_gather_audit_policies:
+        description: Collect audit policies via auditpol
+        type: bool
+        default: true
+      compliance_gather_services:
+        description: Collect service states
+        type: bool
+        default: true
+      compliance_gather_firewall_rules:
+        description: Collect firewall rules
+        type: bool
+        default: false
