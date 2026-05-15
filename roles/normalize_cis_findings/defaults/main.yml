@@ -1,6 +1,6 @@
 ---
-normalize_cis_source_results: []
-normalize_cis_scan_id: ""
-normalize_cis_scan_type: scan
-normalize_cis_output_path: /tmp/compliance/cff
-normalize_cis_framework: CIS
+normalize_cis_findings_source_results: []
+normalize_cis_findings_scan_id: ""
+normalize_cis_findings_scan_type: scan
+normalize_cis_findings_output_path: /tmp/compliance/cff
+normalize_cis_findings_framework: CIS

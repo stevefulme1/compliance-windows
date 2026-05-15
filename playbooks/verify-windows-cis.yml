@@ -21,9 +21,9 @@
       ansible.builtin.include_role:
         name: security.compliance_windows.normalize_cis_findings
       vars:
-        normalize_cis_source_results: "{{ windows_manage_cis_results | default([]) }}"
-        normalize_cis_scan_id: "{{ compliance_scan_id | default(ansible_date_time.iso8601_basic_short) }}"
-        normalize_cis_scan_type: verification
+        normalize_cis_findings_source_results: "{{ windows_manage_cis_results | default([]) }}"
+        normalize_cis_findings_scan_id: "{{ compliance_scan_id | default(ansible_date_time.iso8601_basic_short) }}"
+        normalize_cis_findings_scan_type: verification
 
     - name: Assert compliance threshold met
       ansible.builtin.assert:

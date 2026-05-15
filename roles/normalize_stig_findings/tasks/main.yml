@@ -3,9 +3,9 @@
   ansible.builtin.set_fact:
     normalize_stig_findings_cff_output:
       schema_version: "1.0.0"
-      scan_id: "{{ normalize_stig_scan_id }}"
-      scan_type: "{{ normalize_stig_scan_type }}"
-      framework: "{{ normalize_stig_framework }}"
+      scan_id: "{{ normalize_stig_findings_scan_id }}"
+      scan_type: "{{ normalize_stig_findings_scan_type }}"
+      framework: "{{ normalize_stig_findings_framework }}"
       benchmark: "{{ windows_manage_stig_benchmark_name | default('DISA STIG') }}"
       benchmark_version: "{{ windows_manage_stig_benchmark_version | default('unknown') }}"
       target_host: "{{ inventory_hostname }}"
@@ -13,7 +13,7 @@
       scan_timestamp: "{{ ansible_date_time.iso8601 }}"
       findings: >-
         {{
-          normalize_stig_source_results | default([]) | map('security.compliance_windows.to_cff_stig') | list
+          normalize_stig_findings_source_results | default([]) | map('security.compliance_windows.to_cff_stig') | list
         }}
   tags:
     - normalize
@@ -37,7 +37,7 @@
 - name: Write CFF JSON to output path
   ansible.windows.win_copy:
     content: "{{ normalize_stig_findings_cff_output | to_nice_json }}"
-    dest: "{{ normalize_stig_output_path }}/cff-stig-{{ normalize_stig_scan_id }}.json"
+    dest: "{{ normalize_stig_findings_output_path }}/cff-stig-{{ normalize_stig_findings_scan_id }}.json"
   check_mode: false
   tags:
     - normalize

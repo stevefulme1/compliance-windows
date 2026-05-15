@@ -50,6 +50,13 @@ jobs:
       - name: Install ansible-core
         run: pip install "ansible-core~=${{ matrix.ansible }}.0"
 
+      - name: Install PSScriptAnalyzer modules for pslint
+        run: |
+          pwsh -Command '
+            Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+            Install-Module -Name PSSA-PSCustomUseLiteralPath -RequiredVersion 0.1.1 -Force -Scope CurrentUser
+          '
+
       - name: Run sanity tests
         working-directory: ansible_collections/security/compliance_windows
         run: ansible-test sanity -v --color yes
