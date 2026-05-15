@@ -1,86 +1,53 @@
-# Contributing
+# Contributing to compliance-windows
 
-Thank you for your interest in contributing to `security.compliance_windows`.
+Thank you for your interest in contributing to **compliance-windows**!
 
-## Getting Started
+## How to Contribute
 
-1. Fork the repository and clone your fork.
-2. Create a feature branch from `main`.
-3. Make your changes and ensure CI passes.
-4. Open a pull request against `main`.
+### Reporting Issues
 
-## Development Setup
+- Check existing issues before creating a new one
+- Use the issue templates if available
+- Include steps to reproduce, expected behavior, and actual behavior
+
+### Submitting Changes
+
+1. Fork the repository
+2. Create a feature branch from `main`: `git checkout -b feat/my-feature`
+3. Make your changes following the project conventions
+4. Write or update tests as needed
+5. Ensure all CI checks pass
+6. Submit a pull request with a clear description
+
+### Pull Request Guidelines
+
+- Keep PRs focused on a single change
+- Write meaningful commit messages
+- Update documentation if your change affects user-facing behavior
+- Update CHANGELOG.md with a summary of your changes
+- Ensure CI passes before requesting review
+
+### Code Style
+
+- Follow existing patterns in the codebase
+- Use consistent naming conventions
+- Add comments only when the "why" is non-obvious
+
+### Development Setup
 
 ```bash
-# Install dependencies
-pip install ansible-core ansible-lint ruff
-
-# Install collection dependencies
-ansible-galaxy collection install ansible.windows community.windows
-
-# Run linters
-ansible-lint --profile production
-ruff check plugins/
-ruff format --check plugins/
+git clone https://github.com/stevefulme1/compliance-windows.git
+cd compliance-windows
 ```
 
-## Branch Protection
-
-The `main` branch requires:
-
-- All CI checks to pass (Lint, Python Lint, Sanity 2.16, Sanity 2.17)
-- At least one approving review from a maintainer
-
-PRs from the repository owner are auto-approved and auto-merged after CI passes.
-
-## What to Contribute
-
-### Crosswalk Profiles
-
-New regulatory framework crosswalks are the highest-value contribution. To add one:
-
-1. Create a YAML file in `compliance_profiles/` following the existing `hipaa.yml` or `pci_dss_v4.yml` format.
-2. Each control must map to CIS and/or STIG rule IDs, or be flagged as a `gap` with a `gap_note`.
-3. Add a corresponding scan playbook in `playbooks/`.
-4. Update `galaxy.yml` tags and description.
-
-### Filter Plugins
-
-Filter plugins live in `plugins/filter/` and must:
-
-- Pass `ruff check` and `ruff format`
-- Pass `ansible-test sanity` for ansible-core 2.16 and 2.17
-- Include a docstring on each public method
-
-### Roles
-
-Roles must:
-
-- Use the role name as a variable prefix (e.g., `compliance_crosswalk_` for the `compliance_crosswalk` role)
-- Include `meta/main.yml` with author, license, and platform info
-- Include `meta/argument_specs.yml` documenting all parameters
-- Include `defaults/main.yml` for all configurable parameters
-- Pass `ansible-lint --profile production`
-
-### PowerShell Scripts
-
-PowerShell files in `roles/*/files/` must:
-
-- Use `-LiteralPath` instead of `-Path` for file operations
-- Follow PSScriptAnalyzer formatting rules (brace placement, whitespace)
-- Pass `ansible-test sanity` pslint checks
-
-## Commit Messages
-
-Use [Conventional Commits](https://www.conventionalcommits.org/) format:
-
-```
-feat: add SOC 2 crosswalk profile
-fix: handle empty findings in crosswalk_summary filter
-ci: add sanity test for ansible-core 2.18
-docs: update CHANGELOG for 1.1.0 release
-```
+See README.md for additional setup instructions.
 
 ## Code of Conduct
 
-This project follows the [Ansible Community Code of Conduct](https://docs.ansible.com/ansible/latest/community/code_of_conduct.html).
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+All contributors are expected to uphold this code.
+
+## License
+
+By contributing, you agree that your contributions will be licensed under
+the same license as the project (see LICENSE file).
