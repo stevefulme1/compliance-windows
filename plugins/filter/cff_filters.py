@@ -106,9 +106,7 @@ class FilterModule:
             True: "pass",
             False: "fail",
         }
-        in_desired = result.get(
-            "InDesiredState", result.get("inDesiredState", "")
-        )
+        in_desired = result.get("InDesiredState", result.get("inDesiredState", ""))
         return {
             "ruleId": result.get("RuleId", result.get("ruleId", "")),
             "title": result.get("ResourceId", result.get("resourceId", "")),
@@ -116,9 +114,7 @@ class FilterModule:
             "status": powerstig_status.get(in_desired, "notchecked"),
             "severity": result.get("Severity", result.get("severity", "")),
             "category": "PowerSTIG",
-            "section": result.get(
-                "DscResource", result.get("dscResource", "")
-            ),
+            "section": result.get("DscResource", result.get("dscResource", "")),
             "actualValue": _safe_str(result.get("ActualValue", "")),
             "expectedValue": _safe_str(result.get("ExpectedValue", "")),
             "checkType": "automated",

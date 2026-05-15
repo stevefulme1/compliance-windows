@@ -1,7 +1,7 @@
 ---
 - name: Build CFF document
   ansible.builtin.set_fact:
-    compliance_cff_output:
+    normalize_stig_findings_cff_output:
       schema_version: "1.0.0"
       scan_id: "{{ normalize_stig_scan_id }}"
       scan_type: "{{ normalize_stig_scan_type }}"
@@ -20,23 +20,23 @@
 
 - name: Compute CFF summary statistics
   ansible.builtin.set_fact:
-    compliance_cff_summary:
-      total: "{{ compliance_cff_output.findings | length }}"
-      passed: "{{ compliance_cff_output.findings | selectattr('status', 'equalto', 'pass') | list | length }}"
-      failed: "{{ compliance_cff_output.findings | selectattr('status', 'equalto', 'fail') | list | length }}"
-      not_checked: "{{ compliance_cff_output.findings | selectattr('status', 'equalto', 'notchecked') | list | length }}"
+    normalize_stig_findings_cff_summary:
+      total: "{{ normalize_stig_findings_cff_output.findings | length }}"
+      passed: "{{ normalize_stig_findings_cff_output.findings | selectattr('status', 'equalto', 'pass') | list | length }}"
+      failed: "{{ normalize_stig_findings_cff_output.findings | selectattr('status', 'equalto', 'fail') | list | length }}"
+      not_checked: "{{ normalize_stig_findings_cff_output.findings | selectattr('status', 'equalto', 'notchecked') | list | length }}"
       pass_rate: >-
         {{
-          ((compliance_cff_output.findings | selectattr('status', 'equalto', 'pass') | list | length)
-          / (compliance_cff_output.findings | length | int)) * 100
-          if (compliance_cff_output.findings | length | int) > 0 else 0
+          ((normalize_stig_findings_cff_output.findings | selectattr('status', 'equalto', 'pass') | list | length)
+          / (normalize_stig_findings_cff_output.findings | length | int)) * 100
+          if (normalize_stig_findings_cff_output.findings | length | int) > 0 else 0
         }}
   tags:
     - normalize
 
 - name: Write CFF JSON to output path
   ansible.windows.win_copy:
-    content: "{{ compliance_cff_output | to_nice_json }}"
+    content: "{{ normalize_stig_findings_cff_output | to_nice_json }}"
     dest: "{{ normalize_stig_output_path }}/cff-stig-{{ normalize_stig_scan_id }}.json"
   check_mode: false
   tags:

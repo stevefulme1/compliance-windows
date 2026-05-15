@@ -27,8 +27,8 @@
     - name: Assert compliance threshold met
       ansible.builtin.assert:
         that:
-          - compliance_cff_summary.pass_rate >= (compliance_threshold | default(95) | float)
+          - normalize_stig_findings_cff_summary.pass_rate >= (compliance_threshold | default(95) | float)
         fail_msg: >-
-          Compliance score {{ compliance_cff_summary.pass_rate }}% is below
+          Compliance score {{ normalize_stig_findings_cff_summary.pass_rate }}% is below
           threshold {{ compliance_threshold | default(95) }}%
       when: compliance_enforce_threshold | default(false) | bool

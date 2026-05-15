@@ -9,7 +9,7 @@
 
 - name: Evaluate gathered facts against rules
   ansible.builtin.set_fact:
-    compliance_evaluation_results: >-
+    compliance_evaluate_results: >-
       {{
         compliance_rules.rules | default([])
         | map('security.compliance_windows.evaluate_rule', compliance_evaluate_gathered_facts)
@@ -21,14 +21,14 @@
 
 - name: Build CFF output from evaluation
   ansible.builtin.set_fact:
-    compliance_cff_output:
+    compliance_evaluate_cff_output:
       schema_version: "1.0.0"
       scan_id: "{{ compliance_scan_id | default(ansible_date_time.iso8601_basic_short) }}"
       scan_type: "pre-assessment"
       framework: "{{ compliance_evaluate_framework }}"
       target_host: "{{ inventory_hostname }}"
       scan_timestamp: "{{ ansible_date_time.iso8601 }}"
-      findings: "{{ compliance_evaluation_results }}"
+      findings: "{{ compliance_evaluate_results }}"
   delegate_to: localhost
   tags:
     - evaluate

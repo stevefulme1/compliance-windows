@@ -6,7 +6,7 @@
     headers:
       Authorization: "Bearer {{ compliance_backstage_token }}"
       Content-Type: application/json
-    body: "{{ compliance_cff_output | to_json }}"
+    body: "{{ push_results_cff_output | to_json }}"
     body_format: json
     status_code: [200, 201]
   delegate_to: localhost
@@ -17,6 +17,6 @@
 - name: Push results to Controller job artifacts
   ansible.builtin.set_stats:
     data:
-      compliance_findings: "{{ compliance_cff_output }}"
-      compliance_summary: "{{ compliance_cff_summary }}"
+      compliance_findings: "{{ push_results_cff_output }}"
+      compliance_summary: "{{ push_results_cff_summary }}"
   when: compliance_results_backend == 'artifacts'

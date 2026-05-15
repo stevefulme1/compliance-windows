@@ -14,7 +14,7 @@
 
 - name: Parse gathered compliance data
   ansible.builtin.set_fact:
-    compliance_windows_gathered: "{{ compliance_gather_raw.output | from_json }}"
+    compliance_gather_facts: "{{ compliance_gather_raw.output | from_json }}"
   tags:
     - gather
     - compliance
