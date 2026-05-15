@@ -1,0 +1,169 @@
+---
+framework: HIPAA
+version: "2013"
+title: "HIPAA Security Rule — Technical Safeguards"
+description: >-
+  Maps HIPAA Security Rule technical safeguard requirements (45 CFR § 164.312)
+  to CIS Benchmark and DISA STIG controls for Windows Server.
+
+controls:
+  - id: "164.312(a)(1)"
+    title: "Access Control"
+    description: "Implement technical policies and procedures for electronic information systems that maintain ePHI."
+    cis_rules:
+      - "1.1.1"
+      - "1.1.2"
+      - "1.1.3"
+      - "1.1.4"
+      - "1.1.5"
+      - "1.1.6"
+      - "1.2.1"
+      - "1.2.2"
+      - "1.2.3"
+    stig_rules:
+      - "V-254239"
+      - "V-254240"
+      - "V-254241"
+      - "V-254243"
+
+  - id: "164.312(a)(2)(i)"
+    title: "Unique User Identification"
+    description: "Assign a unique name and/or number for identifying and tracking user identity."
+    cis_rules:
+      - "1.1.1"
+      - "1.1.2"
+    stig_rules:
+      - "V-254239"
+
+  - id: "164.312(a)(2)(ii)"
+    title: "Emergency Access Procedure"
+    description: "Establish procedures for obtaining necessary ePHI during an emergency."
+    cis_rules: []
+    stig_rules: []
+    gap: true
+    gap_note: "Organizational procedure — no direct technical control."
+
+  - id: "164.312(a)(2)(iii)"
+    title: "Automatic Logoff"
+    description: "Implement electronic procedures that terminate an electronic session after a predetermined time of inactivity."
+    cis_rules:
+      - "18.10.77.1"
+      - "19.1.3.1"
+      - "19.1.3.2"
+    stig_rules:
+      - "V-254369"
+
+  - id: "164.312(a)(2)(iv)"
+    title: "Encryption and Decryption"
+    description: "Implement a mechanism to encrypt and decrypt ePHI."
+    cis_rules:
+      - "18.10.9.1.1"
+    stig_rules:
+      - "V-254247"
+      - "V-254248"
+
+  - id: "164.312(b)"
+    title: "Audit Controls"
+    description: "Implement hardware, software, and/or procedural mechanisms that record and examine activity in information systems."
+    cis_rules:
+      - "17.1.1"
+      - "17.1.2"
+      - "17.2.1"
+      - "17.2.2"
+      - "17.2.3"
+      - "17.2.4"
+      - "17.2.5"
+      - "17.3.1"
+      - "17.3.2"
+      - "17.5.1"
+      - "17.5.2"
+      - "17.5.3"
+      - "17.5.4"
+      - "17.5.5"
+      - "17.5.6"
+      - "17.6.1"
+      - "17.6.2"
+      - "17.6.3"
+      - "17.6.4"
+      - "17.7.1"
+      - "17.7.2"
+      - "17.7.3"
+      - "17.7.4"
+      - "17.7.5"
+      - "17.8.1"
+      - "17.9.1"
+      - "17.9.2"
+      - "17.9.3"
+      - "17.9.4"
+      - "17.9.5"
+    stig_rules:
+      - "V-254318"
+      - "V-254319"
+      - "V-254320"
+      - "V-254321"
+      - "V-254322"
+      - "V-254323"
+
+  - id: "164.312(c)(1)"
+    title: "Integrity — Mechanism to Authenticate ePHI"
+    description: "Implement policies and procedures to protect ePHI from improper alteration or destruction."
+    cis_rules:
+      - "2.3.1.2"
+      - "2.3.6.1"
+    stig_rules:
+      - "V-254265"
+      - "V-254266"
+
+  - id: "164.312(c)(2)"
+    title: "Integrity — Mechanism to Authenticate ePHI"
+    description: "Implement electronic mechanisms to corroborate that ePHI has not been altered or destroyed."
+    cis_rules:
+      - "2.3.6.1"
+    stig_rules:
+      - "V-254265"
+
+  - id: "164.312(d)"
+    title: "Person or Entity Authentication"
+    description: "Implement procedures to verify that a person or entity seeking access to ePHI is the one claimed."
+    cis_rules:
+      - "1.1.1"
+      - "1.1.2"
+      - "1.1.3"
+      - "1.1.4"
+      - "1.1.5"
+    stig_rules:
+      - "V-254239"
+      - "V-254240"
+      - "V-254241"
+
+  - id: "164.312(e)(1)"
+    title: "Transmission Security"
+    description: "Implement technical security measures to guard against unauthorized access to ePHI being transmitted."
+    cis_rules:
+      - "18.4.1"
+      - "18.4.2"
+    stig_rules:
+      - "V-254372"
+      - "V-254373"
+
+  - id: "164.312(e)(2)(i)"
+    title: "Transmission Security — Integrity Controls"
+    description: "Implement security measures to ensure electronically transmitted ePHI is not improperly modified."
+    cis_rules:
+      - "2.3.8.1"
+      - "2.3.8.2"
+    stig_rules:
+      - "V-254283"
+      - "V-254284"
+
+  - id: "164.312(e)(2)(ii)"
+    title: "Transmission Security — Encryption"
+    description: "Implement a mechanism to encrypt ePHI whenever deemed appropriate."
+    cis_rules:
+      - "18.4.1"
+      - "18.4.2"
+      - "18.10.9.1.1"
+    stig_rules:
+      - "V-254372"
+      - "V-254373"
+      - "V-254247"

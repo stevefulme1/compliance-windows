@@ -1,0 +1,90 @@
+---
+- name: Load crosswalk profile
+  ansible.builtin.include_vars:
+    file: "{{ lookup('first_found', compliance_crosswalk_profile_paths) }}"
+    name: compliance_crosswalk_profile
+  vars:
+    compliance_crosswalk_profile_paths:
+      - "{{ playbook_dir }}/../compliance_profiles/{{ compliance_crosswalk_framework }}.yml"
+      - "{{ role_path }}/../../compliance_profiles/{{ compliance_crosswalk_framework }}.yml"
+  delegate_to: localhost
+  tags:
+    - crosswalk
+
+- name: Map findings to regulatory controls
+  ansible.builtin.set_fact:
+    compliance_crosswalk_mapped_findings: >-
+      {{
+        compliance_crosswalk_findings
+        | security.compliance_windows.map_controls(
+            compliance_crosswalk_profile,
+            compliance_crosswalk_source_framework)
+      }}
+  delegate_to: localhost
+  tags:
+    - crosswalk
+
+- name: Build control-level summary
+  ansible.builtin.set_fact:
+    compliance_crosswalk_control_summary: >-
+      {{
+        compliance_crosswalk_findings
+        | security.compliance_windows.crosswalk_summary(
+            compliance_crosswalk_profile,
+            compliance_crosswalk_source_framework)
+      }}
+  delegate_to: localhost
+  tags:
+    - crosswalk
+
+- name: Compute crosswalk statistics
+  ansible.builtin.set_fact:
+    compliance_crosswalk_report:
+      framework: "{{ compliance_crosswalk_profile.framework }}"
+      framework_version: "{{ compliance_crosswalk_profile.version }}"
+      source_framework: "{{ compliance_crosswalk_source_framework }}"
+      target_host: "{{ inventory_hostname }}"
+      generated_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+      total_controls: "{{ compliance_crosswalk_control_summary | length }}"
+      controls_passed: >-
+        {{ compliance_crosswalk_control_summary
+           | selectattr('status', 'equalto', 'pass') | list | length }}
+      controls_failed: >-
+        {{ compliance_crosswalk_control_summary
+           | selectattr('status', 'equalto', 'fail') | list | length }}
+      controls_partial: >-
+        {{ compliance_crosswalk_control_summary
+           | selectattr('status', 'equalto', 'partial') | list | length }}
+      controls_gap: >-
+        {{ compliance_crosswalk_control_summary
+           | selectattr('status', 'equalto', 'gap') | list | length }}
+      controls_unmapped: >-
+        {{ compliance_crosswalk_control_summary
+           | selectattr('status', 'equalto', 'unmapped') | list | length }}
+      controls: "{{ compliance_crosswalk_control_summary }}"
+  delegate_to: localhost
+  tags:
+    - crosswalk
+
+- name: Write crosswalk report to file
+  ansible.builtin.copy:
+    content: "{{ compliance_crosswalk_report | to_nice_json }}"
+    dest: "{{ compliance_crosswalk_output_path }}"
+    mode: "0644"
+  delegate_to: localhost
+  when: compliance_crosswalk_output_path | default("", true) | length > 0
+  tags:
+    - crosswalk
+    - reporting
+
+- name: Display crosswalk summary
+  ansible.builtin.debug:
+    msg:
+      framework: "{{ compliance_crosswalk_report.framework }} {{ compliance_crosswalk_report.framework_version }}"
+      total_controls: "{{ compliance_crosswalk_report.total_controls }}"
+      passed: "{{ compliance_crosswalk_report.controls_passed }}"
+      failed: "{{ compliance_crosswalk_report.controls_failed }}"
+      partial: "{{ compliance_crosswalk_report.controls_partial }}"
+      gaps: "{{ compliance_crosswalk_report.controls_gap }}"
+  tags:
+    - crosswalk

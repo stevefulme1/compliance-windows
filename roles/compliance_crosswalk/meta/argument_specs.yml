@@ -1,0 +1,31 @@
+---
+argument_specs:
+  main:
+    short_description: Map CFF findings to regulatory framework controls
+    options:
+      compliance_crosswalk_framework:
+        type: str
+        required: true
+        description: >-
+          Regulatory framework to map against. Must match a file
+          in compliance_profiles/ (e.g. "hipaa" or "pci_dss_v4").
+      compliance_crosswalk_source_framework:
+        type: str
+        required: false
+        default: CIS
+        description: >-
+          Source benchmark framework of the findings — "CIS" or "STIG".
+          Determines which rule ID column in the crosswalk to match.
+      compliance_crosswalk_findings:
+        type: list
+        elements: dict
+        required: true
+        description: >-
+          CFF findings list to annotate with regulatory mappings.
+      compliance_crosswalk_output_path:
+        type: str
+        required: false
+        default: ""
+        description: >-
+          File path to write the crosswalk report JSON. If empty,
+          the report is returned as a variable only.
