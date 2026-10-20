@@ -5,9 +5,15 @@ exclude_paths:
   - .git
   - .github
   - tests/output
+  - rules/
 
 skip_list:
   - experimental
   - fqcn[action-core]
+
+mock_modules:
+  - security.compliance_windows.compliance_evaluate
+  - security.compliance_windows.normalize_powerstig
+  - security.compliance_windows.normalize_xccdf
 
 offline: true

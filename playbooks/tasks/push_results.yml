@@ -57,6 +57,10 @@
   ansible.builtin.debug:
     msg: >-
       POSTed findings for
-      {{ _push_results.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 201) | list | length }}/{{ _push_ndjson_files.files | default([]) | length }}
-      hosts to {{ backstage_api_url }}.
+      {{ _push_results.results | default([])
+      | selectattr('status', 'defined')
+      | selectattr('status', 'equalto', 201)
+      | list | length }}/{{
+      _push_ndjson_files.files | default([])
+      | length }} hosts to {{ backstage_api_url }}.
   when: _push_ndjson_files.files | default([]) | length > 0

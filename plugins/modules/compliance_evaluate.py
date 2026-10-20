@@ -1,6 +1,3 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
 # GNU General Public License v3.0+
 # (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -135,10 +132,12 @@ SEVERITY_MAP = {
     "cat_iii": "CAT_III",
 }
 
+
 def _safe_int(v):
     """Parse an integer, handling hex (0x...) and string representations."""
     s = str(v).strip()
-    return int(s, 0) if s.startswith(('0x', '0X')) else int(s)
+    return int(s, 0) if s.startswith(("0x", "0X")) else int(s)
+
 
 OPERATORS = {
     "eq": lambda a, e: str(a) == str(e),
@@ -177,7 +176,10 @@ def _get_actual_value(facts, rule):
 
     if check_type == "service":
         services = facts.get("services", [])
-        svc = next((s for s in services if s.get("name") == path or s.get("Name") == path), None)
+        svc = next(
+            (s for s in services if s.get("name") == path or s.get("Name") == path),
+            None,
+        )
         if svc is None:
             return None
         return svc.get(prop, svc.get("Status"))
@@ -218,18 +220,18 @@ def evaluate_single_rule(rule, facts):
         op_func = OPERATORS.get(operator)
         if op_func is None:
             finding["status"] = "notchecked"
-            finding["detail"] = "Unknown operator: %s" % operator
+            finding["detail"] = f"Unknown operator: {operator}"
             return finding
 
         passed = op_func(actual, expected)
         finding["status"] = "pass" if passed else "fail"
-        finding["detail"] = "Expected %s %s, got %s" % (operator, expected, actual)
+        finding["detail"] = f"Expected {operator} {expected}, got {actual}"
         finding["actual_value"] = str(actual)
         finding["expected_value"] = str(expected)
 
-    except Exception as exc:
+    except (ValueError, TypeError, KeyError) as exc:
         finding["status"] = "notchecked"
-        finding["detail"] = "Evaluation error: %s" % str(exc)
+        finding["detail"] = f"Evaluation error: {exc}"
 
     return finding
 

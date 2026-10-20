@@ -1,0 +1,10 @@
+[lint]
+ignore = [
+    "E402",   # imports after DOCUMENTATION string (Ansible module convention)
+    "UP010",  # __future__ imports required by ansible-test sanity 2.16
+    "UP001",  # __metaclass__ = type required by ansible-test sanity 2.16
+    "UP009",  # UTF-8 encoding declaration
+    "C408",   # dict() calls are Ansible module convention for argument_spec
+    "I001",   # import sorting conflicts with Ansible DOCUMENTATION placement
+    "EXE001", # shebangs handled by ansible-test sanity ignore files
+]

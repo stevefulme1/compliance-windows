@@ -1,10 +1,10 @@
 """Unit tests for normalize_powerstig module."""
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
 
 import json
 import os
 import sys
-import tempfile
-import pytest
 from unittest.mock import MagicMock
 
 _collection_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))

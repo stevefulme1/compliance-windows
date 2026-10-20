@@ -232,7 +232,6 @@ class FilterModule:
         }
 
 
-
 # NOTE: Rule evaluation logic lives in plugins/modules/compliance_evaluate.py.
 # The evaluate_rule() function that was here has been removed to eliminate
 # duplication (Q1). Use the compliance_evaluate module for rule evaluation.
