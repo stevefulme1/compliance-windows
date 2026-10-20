@@ -1,0 +1,522 @@
+---
+# Compliance: Run DISA SCC STIG scan on Windows targets (SSH or WinRM)
+#
+# This playbook contains 3 plays in a single job template (ADR-003):
+#   Play 0 (localhost/EE): downloads DISA SCC tool (ephemeral) with cache fallback
+#   Play 1 (Windows targets): copies SCC + SCAP content from EE to target,
+#     runs unattended scan, fetches XCCDF results back to EE, cleans up
+#   Play 2 (localhost/EE): normalizes fetched XCCDF results to CFF NDJSON,
+#     streams to compliance API
+#
+# Both localhost plays run in the same container as Play 1, so fetched files
+# are available to the normalize step without cross-container file sharing.
+#
+# SCC is deployed via portable extraction (not the EXE installer). The bundle
+# ZIP from dl.dod.cyber.mil contains both an installer and a portable ZIP —
+# we use the portable approach for agentless operation (no registry entries,
+# no uninstaller required, just delete the directory). See ADR-038 §2.
+#
+# SCC is downloaded ephemerally at scan time and cached in /tmp/compliance-scc
+# on the execution node. On first run, the EE needs internet access to download
+# SCC from dl.dod.cyber.mil. Subsequent runs use the cached copy.
+#
+# SCAP benchmark content is copied from the EE to the target at scan time
+# and removed afterward. The target Windows host does NOT need any
+# pre-installed compliance software. Zero persistent footprint (ADR-008).
+#
+# This is the recommended default scanner. For DSC-based scanning on
+# domain-joined hosts, use run_powerstig.yml. See docs/scanner-selection-guide.md.
+#
+# Variables:
+#   scc_version: DISA SCC version to download (default: 5.14)
+#   scc_bundle_checksum: SHA256 checksum of the bundle ZIP (version-pinned)
+#   scc_cache_dir: EE cache directory for SCC (default: /tmp/compliance-scc)
+#   target_results_dir: temp directory on Windows targets for scan results
+#     (default: C:\Temp\compliance-scan)
+#   fetch_dest_dir: directory on execution node for fetched results
+#     (default: /tmp/compliance-results)
+#   scan_id: required UUID for this scan run (from backend)
+#   backstage_api_url: required URL for compliance API endpoint
+#   ingest_token: required per-scan security token (ADR-010)
+#   compliance_target_hosts: inventory pattern to scan (default: all)
+#   scc_share_path: optional UNC path to pre-staged SCC (e.g. \\server\scc).
+#     When set, targets copy from the share instead of 80MB WinRM transfer.
+#   aap_validate_certs: TLS verification (default: false)
+
+# ── Play 0: Download SCC on execution node (ephemeral with cache) ──────
+
+- name: "Compliance: Download DISA SCC to execution node"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    scc_version: "5.14"
+    scc_download_url: "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/scc-{{ scc_version }}_Windows_bundle.zip"
+    scc_bundle_checksum: "sha256:3f6491cbe3975bd4432ab01b694599e26e068f13de3a21757371791572ca1ebb"
+    scc_cache_dir: /tmp/compliance-scc
+    scc_zip_filename: "scc-{{ scc_version }}_Windows_bundle.zip"
+    scc_zip_path: "{{ scc_cache_dir }}/{{ scc_zip_filename }}"
+    scap_content_ee_dir: /usr/share/scap/windows
+
+  tasks:
+    - name: Create SCC cache directory
+      ansible.builtin.file:
+        path: "{{ scc_cache_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Try downloading SCC from DISA Cyber Exchange
+      block:
+        - name: Download SCC Windows bundle
+          ansible.builtin.get_url:
+            url: "{{ scc_download_url }}"
+            dest: "{{ scc_zip_path }}"
+            checksum: "{{ scc_bundle_checksum | default(omit, true) }}"
+            mode: '0644'
+            timeout: 300
+          register: _scc_download
+
+        - name: Report successful download
+          ansible.builtin.debug:
+            msg: "Downloaded SCC {{ scc_version }} from {{ scc_download_url }}"
+
+        - name: Validate downloaded file is a ZIP archive
+          ansible.builtin.command:
+            cmd: "python3 -c \"import zipfile, sys; sys.exit(0 if zipfile.is_zipfile('{{ scc_zip_path }}') else 1)\""
+          register: _zip_check
+          changed_when: false
+          failed_when: false
+
+        - name: Fail if download is not a ZIP (likely an HTML login page)
+          ansible.builtin.fail:
+            msg: >-
+              Downloaded file is not a valid ZIP archive.
+              DISA Cyber Exchange may have returned an HTML login page.
+              Pre-stage the SCC bundle manually: download from https://dl.dod.cyber.mil
+              on a CAC-enabled workstation and place it at {{ scc_zip_path }}.
+          when: _zip_check.rc != 0
+
+      rescue:
+        - name: Check if cached SCC exists
+          ansible.builtin.stat:
+            path: "{{ scc_zip_path }}"
+          register: _scc_cached
+
+        - name: Fail if no cache and download failed
+          ansible.builtin.fail:
+            msg: >-
+              SCC {{ scc_version }} not available. DISA Cyber Exchange typically
+              requires CAC/PKI authentication for downloads. Pre-stage the bundle:
+              1. Download from https://dl.dod.cyber.mil on a CAC-enabled workstation
+              2. Transfer to the execution node: {{ scc_zip_path }}
+              The scan will use the cached copy on subsequent runs.
+          when: not _scc_cached.stat.exists
+
+        - name: Warn about using cached SCC
+          ansible.builtin.debug:
+            msg: "Using cached SCC {{ scc_version }} from {{ scc_zip_path }}"
+
+    # Extract bundle ZIP (contains installer + portable inner ZIP)
+    - name: Extract SCC bundle
+      ansible.builtin.unarchive:
+        src: "{{ scc_zip_path }}"
+        dest: "{{ scc_cache_dir }}"
+        remote_src: true
+        creates: "{{ scc_cache_dir }}/scc-{{ scc_version }}_Windows"
+
+    # The bundle contains a portable ZIP inside: scc-<ver>_Windows/scc-<ver>_Windows.zip
+    # Extract the inner ZIP to get the portable cscc.exe deployment
+    - name: Extract portable SCC from inner ZIP
+      ansible.builtin.unarchive:
+        src: "{{ scc_cache_dir }}/scc-{{ scc_version }}_Windows/scc-{{ scc_version }}_Windows.zip"
+        dest: "{{ scc_cache_dir }}"
+        remote_src: true
+        creates: "{{ scc_cache_dir }}/scc_{{ scc_version }}"
+
+    - name: Locate cscc.exe in portable deployment
+      ansible.builtin.find:
+        paths: "{{ scc_cache_dir }}"
+        patterns: "cscc.exe"
+        recurse: true
+      register: _cscc_exe_files
+      failed_when: _cscc_exe_files.files | length == 0
+
+    - name: Set cscc.exe directory fact
+      ansible.builtin.set_fact:
+        cscc_exe_dir: "{{ (_cscc_exe_files.files | first).path | dirname }}"
+
+    - name: Report SCC location
+      ansible.builtin.debug:
+        msg: "SCC ready at {{ cscc_exe_dir }}/cscc.exe"
+
+
+# ── Play 1: Scan Windows targets via WinRM ─────────────────────────────
+
+- name: "Compliance: DISA SCC STIG scan"
+  hosts: "{{ compliance_target_hosts | default('all') }}"
+  gather_facts: true
+
+  vars:
+    cscc_exe_dir: "{{ hostvars['localhost']['cscc_exe_dir'] }}"
+    scap_content_ee_dir: /usr/share/scap/windows
+    target_results_dir: 'C:\Temp\compliance-scan'
+    target_scc_dir: 'C:\Temp\compliance-scc'
+    fetch_dest_dir: /tmp/compliance-results
+
+    # OS build → SCAP benchmark mapping
+    # Each host gets only the benchmark matching its OS version.
+    # WS2025 (build 26100) has no DISA SCAP benchmark yet — scan with WS2022 + CPE override.
+    # In a mixed fleet (WS2019 + WS2022 + WS2025), each host installs and enables
+    # only its matching benchmark — no cross-version scanning.
+    _os_benchmark_map:
+      '14393': { zip: 'WS2016_SCAP.zip', match: '2016' }
+      '17763': { zip: 'WS2019_SCAP.zip', match: '2019' }
+      '20348': { zip: 'WS2022_SCAP.zip', match: '2022' }
+      '26100': { zip: 'WS2022_SCAP.zip', match: '2022' }
+    _os_build: "{{ ansible_kernel.split('.')[2] | default('20348') }}"
+    _os_info: "{{ _os_benchmark_map[_os_build] | default({'zip': 'WS2022_SCAP.zip', 'match': '2022'}) }}"
+    _benchmark_zip: "{{ _os_info.zip }}"
+    _benchmark_match: "{{ _os_info.match }}"
+    _is_ws2025: "{{ _os_build == '26100' }}"
+
+  tasks:
+    - name: Create local results directory (before per-host work)
+      ansible.builtin.file:
+        path: "{{ fetch_dest_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Run SCC scan with guaranteed cleanup
+      block:
+        # ── Deploy SCC to target ──────────────────────────────────────────
+        # Two modes: network share (fast, ~0 WinRM overhead) or WinRM copy
+        # (default, ~80 MB per host). Set scc_share_path to a UNC path
+        # (e.g. \\fileserver\compliance\scc) to use the share mode.
+        - name: Create SCC directory on target
+          ansible.windows.win_file:
+            path: "{{ target_scc_dir }}"
+            state: directory
+
+        - name: Create results directory on target
+          ansible.windows.win_file:
+            path: "{{ target_results_dir }}"
+            state: directory
+
+        - name: Copy SCC from network share
+          ansible.windows.win_copy:
+            src: "{{ scc_share_path }}\\"
+            dest: "{{ target_scc_dir }}"
+            remote_src: true
+          when: scc_share_path | default('') | length > 0
+
+        - name: Copy SCC from EE via WinRM
+          ansible.windows.win_copy:
+            src: "{{ cscc_exe_dir }}/"
+            dest: "{{ target_scc_dir }}"
+          when: scc_share_path | default('') | length == 0
+
+        # ── Install matching SCAP benchmark (M4: per-host selection) ──────
+        # Copy only the benchmark matching this host's OS version.
+        # WS2025 uses WS2022 benchmark with CPE override (M2).
+        - name: Copy matching SCAP benchmark to target
+          ansible.windows.win_copy:
+            src: "{{ scap_content_ee_dir }}/{{ _benchmark_zip }}"
+            dest: "{{ target_scc_dir }}\\{{ _benchmark_zip }}"
+
+        - name: Install SCAP benchmark into SCC
+          ansible.windows.win_command:
+            cmd: >-
+              {{ target_scc_dir }}\cscc.exe
+              -u {{ target_results_dir }}
+              --installScap {{ target_scc_dir }}\{{ _benchmark_zip }}
+              {{ scc_mac_level | default('MAC-1_Classified') }} --force
+            chdir: "{{ target_scc_dir }}"
+
+        - name: Remove benchmark ZIP from target
+          ansible.windows.win_file:
+            path: "{{ target_scc_dir }}\\{{ _benchmark_zip }}"
+            state: absent
+
+        # ── Enable all benchmarks + CPE filtering ─────────────────────
+        # SCC's CPE mechanism auto-selects benchmarks matching the host OS.
+        # For WS2025 (no native benchmark), ignoreCPEOVALResults forces
+        # WS2022 benchmarks to evaluate. Non-matching benchmarks produce
+        # zero results (CPE skips them), so --enableAll is safe.
+        # Selective --disableAll/--enableBenchmark was attempted but
+        # produces zero results despite RC=0 — SCC config persistence
+        # issue under investigation. --enableAll + CPE is the proven path.
+        - name: Enable all installed benchmarks
+          ansible.windows.win_command:
+            cmd: "{{ target_scc_dir }}\\cscc.exe -u {{ target_results_dir }} --enableAll"
+            chdir: "{{ target_scc_dir }}"
+
+        - name: List installed benchmarks
+          ansible.windows.win_command:
+            cmd: "{{ target_scc_dir }}\\cscc.exe -u {{ target_results_dir }} --listAllBenchmarks"
+            chdir: "{{ target_scc_dir }}"
+          register: _installed_benchmarks
+          changed_when: false
+          failed_when: false
+
+        - name: Report scan configuration
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }} (build {{ _os_build }}, WS{{ _benchmark_match }}):
+              MAC level {{ scc_mac_level | default('MAC-1_Classified') }}.
+              {{ _installed_benchmarks.stdout_lines | default([]) | select('search', 'Windows') | list | length }} Windows benchmarks installed.
+              {{ 'CPE override active (WS2025 using WS2022 benchmark).' if _is_ws2025 | bool else '' }}
+              {{ 'CPE override active (WS2025).' if _is_ws2025 | bool else 'CPE filtering normal.' }}
+
+        # ── CPE override for WS2025 only (M2) ────────────────────────────
+        # WS2025 has no native DISA SCAP benchmark yet. Force the WS2022
+        # benchmark to evaluate by ignoring CPE applicability checks.
+        # WS2019/2022 hosts use CPE normally (their benchmarks match).
+        - name: Override CPE applicability for WS2025
+          ansible.windows.win_command:
+            cmd: "{{ target_scc_dir }}\\cscc.exe -u {{ target_results_dir }} --setOpt ignoreCPEOVALResults 1"
+            chdir: "{{ target_scc_dir }}"
+          when: _is_ws2025 | bool
+
+        # ── Run SCC scan ──────────────────────────────────────────────
+        - name: Run SCC scan
+          ansible.windows.win_command:
+            cmd: >-
+              {{ target_scc_dir }}\cscc.exe
+              -u {{ target_results_dir }}
+              --setOpt dirAllSessionsEnabled 0
+              --setOpt dirContentTypeEnabled 0
+              --setOpt dirSessionEnabled 0
+              --setOpt dirSessionResultsEnabled 0
+              --setOpt dirStreamNameEnabled 0
+              --setOpt dirTargetNameEnabled 0
+              --setOpt dirXMLEnabled 0
+              --setOpt saveResultsForNotApplicableContent 0
+            chdir: "{{ target_scc_dir }}"
+          register: _scan_result
+          failed_when: _scan_result.rc > 1
+          changed_when: false
+          timeout: 1200
+
+        # ── Fetch XCCDF results from target to EE ──────────────────────────
+        # SCC may install multiple versions of the same STIG benchmark (e.g.
+        # V2R7 and V2R8). We only want the latest version's results.
+        # Filenames sort lexically by version: ..._STIG-002.008.018.xml > ..._STIG-002.007.017.xml
+        - name: Find Windows Server STIG XCCDF result XML files on target
+          ansible.windows.win_find:
+            paths: "{{ target_results_dir }}"
+            patterns: "*XCCDF*Windows_Server_{{ _benchmark_match }}_STIG*.xml"
+            recurse: true
+          register: _result_files_all
+
+        - name: Select latest STIG version only
+          ansible.builtin.set_fact:
+            _result_files_target:
+              files: "{{ [_result_files_all.files | sort(attribute='path', reverse=true) | first] }}"
+          when: _result_files_all.files | length > 0
+
+        - name: Set empty results if no files found
+          ansible.builtin.set_fact:
+            _result_files_target:
+              files: []
+          when: _result_files_all.files | length == 0
+
+        # ── Warn and skip if scan produced no results ─────────────────
+        - name: Read SCC error log if no results
+          ansible.windows.win_powershell:
+            script: |
+              $logDir = "{{ target_results_dir }}\Logs"
+              if (Test-Path $logDir) {
+                  $logs = Get-ChildItem $logDir -Filter '*Error*' -Recurse
+                  foreach ($log in $logs) {
+                      "=== $($log.Name) ==="
+                      Get-Content $log.FullName -Raw | Select-Object -First 1
+                  }
+              } else { "No error logs found" }
+          register: _scc_error_log
+          when: _result_files_target.files | length == 0
+
+        - name: Warn and skip host with no results
+          when: _result_files_target.files | length == 0
+          block:
+            - name: Report no-results warning
+              ansible.builtin.debug:
+                msg: >-
+                  WARNING: No XCCDF results from {{ inventory_hostname }}.
+                  SCC RC={{ _scan_result.rc | default('?') }}.
+                  Error log: {{ (_scc_error_log.output | default(['none'])) | join(' ') | truncate(500) }}.
+                  Skipping this host — other hosts will continue.
+
+            - name: Skip to next host
+              ansible.builtin.meta: end_host
+
+        - name: Fetch XCCDF result from target to EE
+          ansible.builtin.fetch:
+            src: "{{ item.path }}"
+            dest: "{{ fetch_dest_dir }}/xccdf-results-{{ inventory_hostname }}.xml"
+            flat: true
+          loop: "{{ _result_files_target.files }}"
+          loop_control:
+            label: "{{ item.path | regex_replace('.*[/\\\\]', '') }}"
+
+      # ── M3: Catch task failures (timeout, WinRM errors) per-host ──────
+      # Without rescue, a timeout on one host fails the entire play and
+      # prevents other hosts' results from being normalized.
+      rescue:
+        - name: Report host failure
+          ansible.builtin.debug:
+            msg: >-
+              WARNING: {{ inventory_hostname }} failed during SCC scan.
+              Error: {{ ansible_failed_result.msg | default('unknown') | truncate(300) }}.
+              Skipping this host — other hosts will continue.
+
+        - name: Skip failed host
+          ansible.builtin.meta: end_host
+
+      always:
+        - name: Remove scan results from target
+          ansible.windows.win_file:
+            path: "{{ target_results_dir }}"
+            state: absent
+
+        - name: Remove SCC from target
+          ansible.windows.win_file:
+            path: "{{ target_scc_dir }}"
+            state: absent
+
+    - name: Report scan status
+      ansible.builtin.debug:
+        msg: >-
+          SCC scan complete on {{ inventory_hostname }}.
+          XCCDF results fetched to {{ fetch_dest_dir }}.
+
+
+# ── Play 2: Normalize XCCDF results on execution node ─────────────────
+# This play runs in the same job as the scan, so fetched files are
+# available on the local filesystem.
+#
+# NOTE: This uses security.compliance_windows.normalize_xccdf which needs
+# to be implemented as a thin wrapper around the shared normalize_common.py.
+# SCC outputs XCCDF XML in the same format as OpenSCAP, so the shared
+# normalizer handles it correctly.
+
+- name: "Compliance: Normalize XCCDF results"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    fetch_dest_dir: /tmp/compliance-results
+    output_file: /tmp/compliance_report.json
+
+  tasks:
+    - name: Find all fetched XCCDF result files
+      ansible.builtin.find:
+        paths: "{{ fetch_dest_dir }}"
+        patterns: "xccdf-results-*.xml,*XCCDF*.xml"
+      register: _result_files
+
+    - name: Warn if no results found
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: No XCCDF result files found in {{ fetch_dest_dir }}.
+          All hosts may have failed or been skipped. Check Play 1 output.
+      when: _result_files.files | length == 0
+
+    - name: End if nothing to normalize
+      ansible.builtin.meta: end_play
+      when: _result_files.files | length == 0
+
+    # Normalize each host's XCCDF results individually. Each loop
+    # iteration produces a runner_on_ok event with findings for
+    # that host. The backend iterates over ALL events to collect
+    # findings from every host. This avoids Controller's event size
+    # limit which truncates payloads with 4000+ findings.
+    - name: Locate rules metadata file
+      ansible.builtin.find:
+        paths: "{{ (role_path | default(playbook_dir)) + '/../rules' }}"
+        patterns: "stig_windows_*.yml"
+      register: _rules_files
+      failed_when: false
+
+    - name: Evaluate compliance for each host
+      security.compliance_windows.normalize_xccdf:
+        results_files:
+          - "{{ item.path }}"
+        output_file: "{{ fetch_dest_dir }}/findings-{{ _host_label }}.json"
+        profile_name: "DISA STIG Windows Server"
+        framework: "DISA_STIG"
+        scanner_name: "scc"
+        certification_status: "certified"
+        certification_authority: "SCAP 1.3"
+        rules_metadata_file: "{{ (_rules_files.files | default([]) | selectattr('path', 'search', '_2022') | map(attribute='path') | first | default((_rules_files.files | default([]) | first | default({})).path | default(''))) }}"
+        compose_post_body: "{{ (backstage_api_url | default('')) | length > 0 }}"
+        post_body_format: ndjson
+        scan_id: "{{ scan_id | default('') }}"
+        ingest_token: "{{ ingest_token | default('') }}"
+        finalize: "{{ ansible_loop.last | default(false) }}"
+      vars:
+        _host_label: "{{ item.path | basename | regex_replace('xccdf-results-(.+)__\\d+\\.xml', '\\1') | regex_replace('xccdf-results-(.+)\\.xml', '\\1') }}"
+      loop: "{{ _result_files.files | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+        extended: true
+      register: _normalized
+
+    # ── Stream NDJSON to compliance API (ADR-034) ────────────────────
+    # The normalizer composed .ndjson files (preamble + one finding per
+    # line). uri+src streams each file — zero findings data in Ansible's
+    # Jinja2 variable space (ADR-033).
+
+    - name: Find per-host NDJSON files
+      ansible.builtin.find:
+        paths: "{{ fetch_dest_dir }}"
+        patterns: "*.ndjson"
+      register: _post_body_files
+      when: backstage_api_url | default('') | length > 0
+
+    - name: Stream NDJSON findings per-host to compliance API
+      ansible.builtin.uri:
+        url: "{{ backstage_api_url }}/api/compliance/findings/ingest"
+        method: POST
+        src: "{{ item.path }}"
+        headers:
+          Content-Type: application/x-ndjson
+          Authorization: "Bearer {{ ingest_token | default('') }}"
+        status_code: [201]
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
+        timeout: 120
+      no_log: true
+      loop: "{{ _post_body_files.files | default([]) | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when:
+        - backstage_api_url | default('') | length > 0
+        - scan_id | default('') | length > 0
+      register: _post_results
+      failed_when: false
+
+    - name: Fail if no findings were ingested
+      ansible.builtin.fail:
+        msg: >-
+          All {{ _post_body_files.files | length }} POST requests failed.
+          Check the POST task output above for HTTP status codes.
+      when:
+        - backstage_api_url | default('') | length > 0
+        - _post_body_files.files | default([]) | length > 0
+        - _post_results.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 201) | list | length == 0
+
+    - name: Report POST results
+      ansible.builtin.debug:
+        msg: >-
+          POSTed findings for {{ _post_results.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 201) | list | length }}/{{ _post_body_files.files | default([]) | length }} hosts to {{ backstage_api_url }}.
+      when: backstage_api_url | default('') | length > 0
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg: >-
+          Normalized {{ _result_files.files | length }} hosts.
+...

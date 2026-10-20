@@ -1,0 +1,510 @@
+---
+# Compliance: Run PowerSTIG DSC scan on Windows targets
+#
+# This playbook contains 2 plays in a single job template (ADR-003):
+#   Play 1 (Windows targets): runs PowerSTIG DSC audit via Test-DscConfiguration,
+#     transforms results to CFF JSON, fetches back to EE
+#   Play 2 (localhost/EE): converts CFF JSON to NDJSON, streams to compliance API
+#
+# Both plays run in the same container, so fetched files are available to the
+# normalize step without cross-container file sharing.
+#
+# PowerSTIG is installed ephemerally on the Windows TARGET at scan time (ADR-008).
+# DSC (Desired State Configuration) is built into Windows Server 2012 R2+.
+# No DSC certificate or LCM configuration is needed — PowerSTIG runs as SYSTEM.
+#
+# Secondary scanner for domain-joined hosts with Active Directory and
+# certificate infrastructure. For standalone hosts or SCAP 1.3 certified
+# scanning, use run_scc.yml (the default). See docs/scanner-selection-guide.md.
+#
+# REQUIREMENT: Target hosts must be domain-joined. Test-DscConfiguration
+# is unsupported on standalone/workgroup hosts across all Windows Server
+# versions (2016-2025). See docs/dsc-windows-server-2025-research.md.
+#
+# Variables:
+#   compliance_target_hosts: inventory pattern to scan (default: all)
+#   scan_id: required UUID for this scan run (from backend)
+#   backstage_api_url: required URL for compliance API endpoint
+#   ingest_token: required per-scan security token (ADR-010)
+#   compliance_stig_version: PowerSTIG STIG version (default: "2.1")
+#   compliance_framework: compliance framework (default: DISA_STIG)
+#   remediate_jt_name: remediation JT name (auto-populated by profile)
+#   aap_validate_certs: TLS verification (default: false)
+
+# ── Play 1: PowerSTIG DSC scan on Windows targets ─────────────────────
+
+- name: "Compliance: PowerSTIG DISA STIG scan"
+  hosts: "{{ compliance_target_hosts | default('all') }}"
+  gather_facts: true
+
+  vars:
+    fetch_dest_dir: /tmp/compliance-results
+    _stig_version: "{{ compliance_stig_version | default('') }}"
+    _scan_id: "{{ scan_id | default(ansible_date_time.iso8601_basic_short) }}"
+
+  tasks:
+    - name: Create fetch destination on execution node
+      ansible.builtin.file:
+        path: "{{ fetch_dest_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Run PowerSTIG scan and normalize to CFF
+      block:
+        - name: Check if PowerSTIG module is installed
+          ansible.windows.win_powershell:
+            script: |
+              $mod = Get-Module -ListAvailable -Name PowerSTIG | Select-Object -First 1
+              if ($mod) { $mod.Version.ToString() } else { "NOT_INSTALLED" }
+          register: _powerstig_check
+          changed_when: false
+
+        - name: Install PowerSTIG module and dependencies (agentless — ADR-008 pattern)
+          ansible.windows.win_powershell:
+            script: |
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers | Out-Null
+              Install-Module -Name PowerSTIG -Force -Scope AllUsers -AllowClobber
+              # Install required DSC resource modules (composite resources need these on the target)
+              (Get-Module PowerSTIG -ListAvailable).RequiredModules |
+                ForEach-Object { Install-Module -Name $_.Name -Force -Scope AllUsers -AllowClobber -ErrorAction SilentlyContinue }
+              # Increase WinRM envelope for large MOF files (PowerSTIG MOFs can be 400KB+)
+              Set-Item -Path WSMan:\localhost\MaxEnvelopeSizekb -Value 8192 -ErrorAction SilentlyContinue
+              (Get-Module -ListAvailable -Name PowerSTIG | Select-Object -First 1).Version.ToString()
+          register: _powerstig_install
+          when: (_powerstig_check.output | default(['']) | first | trim) == "NOT_INSTALLED"
+
+        - name: Set PowerSTIG version fact
+          ansible.builtin.set_fact:
+            _powerstig_version: >-
+              {{ (_powerstig_install.output | default(_powerstig_check.output) | first | default('unknown')) | trim }}
+            _powerstig_was_installed: "{{ (_powerstig_check.output | default(['']) | first | trim) == 'NOT_INSTALLED' }}"
+
+        - name: Report PowerSTIG version
+          ansible.builtin.debug:
+            msg: >-
+              PowerSTIG {{ _powerstig_version }} on {{ inventory_hostname }}
+              {{ '(installed ephemerally)' if _powerstig_was_installed | bool else '(pre-existing)' }}
+
+        - name: Resolve temp directory on target
+          ansible.windows.win_powershell:
+            script: $env:TEMP
+          register: _win_temp
+          changed_when: false
+
+        # Step 1: Reset LCM to clean state (no cert, no pull server)
+        # PowerSTIG runs as SYSTEM and needs no credential encryption.
+        # Stale MetaConfig.mof from previous DSC runs (Azure, EC2 launch,
+        # prior failed scans) causes "Could not find mandatory property
+        # Thumbprint" errors. Disable the LCM and clear all stale state.
+        - name: "DSC Step 1: Reset LCM to clean disabled state"
+          ansible.windows.win_powershell:
+            error_action: stop
+            script: |
+              Stop-DscConfiguration -Force -ErrorAction SilentlyContinue
+              Remove-DscConfigurationDocument -Stage Current, Pending, Previous -Force -ErrorAction SilentlyContinue
+
+              [DSCLocalConfigurationManager()]
+              configuration ResetLCM {
+                  Node 'localhost' {
+                      Settings {
+                          RefreshMode = 'Push'
+                      }
+                  }
+              }
+              $lcmDir = Join-Path $env:TEMP 'ResetLCM'
+              ResetLCM -OutputPath $lcmDir | Out-Null
+              Set-DscLocalConfigurationManager -Path $lcmDir -Force
+              Remove-Item $lcmDir -Recurse -Force -ErrorAction SilentlyContinue
+
+              $lcm = Get-DscLocalConfigurationManager
+              @{
+                  RefreshMode = $lcm.RefreshMode
+                  CertificateID = $lcm.CertificateID
+              } | ConvertTo-Json -Compress
+          register: _lcm_reset
+          changed_when: false
+
+        - name: Report LCM state
+          ansible.builtin.debug:
+            msg: "LCM reset: {{ (_lcm_reset.output | join('')) }}"
+
+        # Step 2: Compile PowerSTIG MOF (no certificate — DSC runs as SYSTEM)
+        - name: "DSC Step 2: Compile PowerSTIG MOF"
+          ansible.windows.win_powershell:
+            error_action: stop
+            parameters:
+              StigVersion: "{{ _stig_version }}"
+            script: |
+              param([string]$StigVersion)
+              Import-Module PowerSTIG
+
+              $osCaption = (Get-CimInstance Win32_OperatingSystem).Caption
+              if     ($osCaption -match '2025') { $osVer = '2025' }
+              elseif ($osCaption -match '2022') { $osVer = '2022' }
+              elseif ($osCaption -match '2019') { $osVer = '2019' }
+              else { throw "Unsupported OS: $osCaption" }
+
+              $cs = Get-CimInstance Win32_ComputerSystem
+              $isStandalone = -not $cs.PartOfDomain
+              if (-not $isStandalone) {
+                  $domainName = $cs.Domain
+                  try   { $forestName = ([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()).Name }
+                  catch { $forestName = $domainName }
+              } else {
+                  $domainName = 'standalone.local'
+                  $forestName = 'standalone.local'
+              }
+
+              $ConfigurationData = @{
+                  AllNodes = @(@{
+                      NodeName = 'localhost'
+                      PSDscAllowPlainTextPassword = $true
+                      PSDscAllowDomainUser = $true
+                  })
+              }
+
+              $stigVersionLine = if ($StigVersion) { "            StigVersion = '$StigVersion'" } else { '' }
+              $skipLine = if ($isStandalone) {
+                  "            SkipRuleType = @('RootCertificateRule','UserRightRule')"
+              } else { '' }
+
+              $configScript = @"
+              configuration ComplianceAudit {
+                  param([string]`$NodeName = 'localhost')
+                  Import-DscResource -ModuleName PowerStig
+                  Node `$NodeName {
+                      WindowsServer BaseLine {
+                          OsVersion   = '$osVer'
+                          OsRole      = 'MS'
+              $stigVersionLine
+                          DomainName  = '$domainName'
+                          ForestName  = '$forestName'
+              $skipLine
+                      }
+                  }
+              }
+              "@
+              Invoke-Expression $configScript
+
+              $mofDir = Join-Path $env:TEMP "StigMof-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
+              ComplianceAudit -ConfigurationData $ConfigurationData -OutputPath $mofDir | Out-Null
+
+              # Delete meta.mof — PowerSTIG needs no LCM meta-configuration
+              Remove-Item "$mofDir\*.meta.mof" -Force -ErrorAction SilentlyContinue
+
+              $mofFile = Get-ChildItem $mofDir -Filter '*.mof' |
+                  Where-Object { $_.Name -notlike '*.meta.mof' } |
+                  Select-Object -First 1 -ExpandProperty FullName
+              if (-not $mofFile) { throw "No MOF file generated in $mofDir" }
+
+              @{
+                  MofFile = $mofFile
+                  MofDir = $mofDir
+                  OsVersion = $osVer
+                  IsStandalone = $isStandalone
+              } | ConvertTo-Json -Compress
+          register: _dsc_mof
+          timeout: 300
+          changed_when: false
+
+        - name: Parse MOF info
+          ansible.builtin.set_fact:
+            _mof_info: "{{ (_dsc_mof.output | join('')) | from_json }}"
+
+        - name: Report MOF compilation
+          ansible.builtin.debug:
+            msg: "MOF compiled: {{ _mof_info.MofFile }} (OS={{ _mof_info.OsVersion }}, standalone={{ _mof_info.IsStandalone }})"
+
+        - name: "DSC Diagnostic: Inspect MOF + system MetaConfig state"
+          ansible.windows.win_powershell:
+            parameters:
+              MofDir: "{{ _mof_info.MofDir }}"
+            script: |
+              param([string]$MofDir)
+              $diag = @{}
+
+              # Check compilation output for meta.mof
+              $diag['CompilationFiles'] = @(Get-ChildItem $MofDir -Filter '*.mof' | Select-Object Name, Length)
+
+              # Check system-level MetaConfig
+              $sysConfig = 'C:\Windows\System32\Configuration'
+              $metaPath = Join-Path $sysConfig 'MetaConfig.mof'
+              if (Test-Path $metaPath) {
+                  $diag['SystemMetaConfigExists'] = $true
+                  $diag['SystemMetaConfigContent'] = (Get-Content $metaPath -Raw).Substring(0, [Math]::Min(2000, (Get-Content $metaPath -Raw).Length))
+              } else {
+                  $diag['SystemMetaConfigExists'] = $false
+              }
+
+              # Check ALL mof files in system config dir
+              $diag['SystemConfigFiles'] = @(Get-ChildItem $sysConfig -Filter '*.mof*' -ErrorAction SilentlyContinue | Select-Object Name, Length)
+
+              # LCM state
+              $lcm = Get-DscLocalConfigurationManager
+              $diag['LCM_RefreshMode'] = $lcm.RefreshMode
+              $diag['LCM_CertificateID'] = $lcm.CertificateID
+              $diag['LCM_ConfigurationMode'] = $lcm.ConfigurationMode
+
+              $diag | ConvertTo-Json -Depth 5 -Compress
+          register: _diag
+          changed_when: false
+
+        - name: Report diagnostic
+          ansible.builtin.debug:
+            msg: "{{ (_diag.output | join('')) }}"
+
+        - name: "Clean system-level MetaConfig if it has CertificateID"
+          ansible.windows.win_powershell:
+            script: |
+              $sysConfig = 'C:\Windows\System32\Configuration'
+              # Delete any stale MetaConfig from previous cert-based attempts
+              Remove-Item "$sysConfig\MetaConfig.mof" -Force -ErrorAction SilentlyContinue
+              Remove-Item "$sysConfig\MetaConfig.mof.checksum" -Force -ErrorAction SilentlyContinue
+              # Also clean any pending/previous configs that might reference certs
+              Remove-Item "$sysConfig\Previous.mof" -Force -ErrorAction SilentlyContinue
+              Remove-Item "$sysConfig\Current.mof" -Force -ErrorAction SilentlyContinue
+              Remove-Item "$sysConfig\Pending.mof" -Force -ErrorAction SilentlyContinue
+              Remove-Item "$sysConfig\backup.mof" -Force -ErrorAction SilentlyContinue
+              Remove-Item "$sysConfig\*.mof.checksum" -Force -ErrorAction SilentlyContinue
+
+              # Re-apply clean LCM with Push mode (no cert, no pull)
+              [DSCLocalConfigurationManager()]
+              configuration CleanLCM {
+                  Node 'localhost' {
+                      Settings { RefreshMode = 'Push' }
+                  }
+              }
+              $lcmDir = Join-Path $env:TEMP 'CleanLCM'
+              CleanLCM -OutputPath $lcmDir | Out-Null
+              Set-DscLocalConfigurationManager -Path $lcmDir -Force
+              Remove-Item $lcmDir -Recurse -Force -ErrorAction SilentlyContinue
+
+              $lcm = Get-DscLocalConfigurationManager
+              @{
+                  RefreshMode = $lcm.RefreshMode
+                  CertificateID = $lcm.CertificateID
+                  SystemMofFiles = @(Get-ChildItem 'C:\Windows\System32\Configuration' -Filter '*.mof*' -EA SilentlyContinue | Select Name)
+              } | ConvertTo-Json -Depth 3 -Compress
+          register: _clean_lcm
+          changed_when: false
+
+        - name: Report clean LCM state
+          ansible.builtin.debug:
+            msg: "{{ (_clean_lcm.output | join('')) }}"
+
+        # Step 3: Audit compliance with Test-DscConfiguration -ReferenceConfiguration
+        # This tests the target's CURRENT state against the compiled MOF
+        # WITHOUT applying or modifying anything (pure audit, not enforcement).
+        - name: "DSC Step 3: Test compliance (audit-only)"
+          ansible.windows.win_powershell:
+            error_action: stop
+            parameters:
+              MofFile: "{{ _mof_info.MofFile }}"
+              ResultPath: "{{ (_win_temp.output | first | trim) }}\\compliance-dsc-result.json"
+              IsStandalone: "{{ _mof_info.IsStandalone }}"
+            script: |
+              param([string]$MofFile, [string]$ResultPath, [string]$IsStandalone)
+
+              $testResult = Test-DscConfiguration -ReferenceConfiguration $MofFile
+
+              $findings = [System.Collections.Generic.List[hashtable]]::new()
+              if ($null -ne $testResult.ResourcesInDesiredState) {
+                  foreach ($r in $testResult.ResourcesInDesiredState) {
+                      $rid = $r.ResourceId -replace '.*\[(.+?)\].*','$1'
+                      $findings.Add(@{ RuleId = $rid; Status = 'Compliant'; ResourceName = $r.ResourceId; InDesiredState = $true })
+                  }
+              }
+              if ($null -ne $testResult.ResourcesNotInDesiredState) {
+                  foreach ($r in $testResult.ResourcesNotInDesiredState) {
+                      $rid = $r.ResourceId -replace '.*\[(.+?)\].*','$1'
+                      $findings.Add(@{ RuleId = $rid; Status = 'NonCompliant'; ResourceName = $r.ResourceId; InDesiredState = $false })
+                  }
+              }
+
+              $skipTypes = if ($IsStandalone -eq 'True') { @('RootCertificateRule','UserRightRule') } else { @() }
+              @{
+                  InDesiredState    = [bool]$testResult.InDesiredState
+                  TotalResources    = $findings.Count
+                  CompliantCount    = ($findings | Where-Object { $_.InDesiredState }).Count
+                  NonCompliantCount = ($findings | Where-Object { -not $_.InDesiredState }).Count
+                  SkippedRuleTypes  = $skipTypes
+                  OsVersion         = 'detected'
+                  OsRole            = 'MS'
+                  Findings          = @($findings)
+              } | ConvertTo-Json -Depth 10 -Compress |
+                  Set-Content -Path $ResultPath -Encoding UTF8
+          register: _powerstig_raw
+          timeout: 600
+          changed_when: false
+
+        - name: Read DSC results from target
+          ansible.builtin.slurp:
+            src: "{{ (_win_temp.output | first | trim) }}\\compliance-dsc-result.json"
+          register: _dsc_json_b64
+
+        - name: Parse PowerSTIG results
+          ansible.builtin.set_fact:
+            _powerstig_parsed: "{{ (_dsc_json_b64.content | b64decode) | from_json }}"
+
+        - name: Transform findings to CFF
+          ansible.builtin.set_fact:
+            _cff_output:
+              schema_version: "1.0.0"
+              scan_id: "{{ _scan_id }}"
+              scan_type: scan
+              framework: "{{ compliance_framework | default('DISA_STIG') }}"
+              benchmark: "PowerSTIG DISA STIG"
+              benchmark_version: "{{ _powerstig_version }}"
+              target_host: "{{ inventory_hostname }}"
+              target_os: "Windows Server {{ ansible_distribution_version | default('unknown') }}"
+              scan_timestamp: "{{ ansible_date_time.iso8601 }}"
+              scanner: powerstig
+              findings: >-
+                {{ _powerstig_parsed.Findings | default([])
+                   | map('security.compliance_windows.to_cff_powerstig') | list }}
+
+        - name: Write CFF JSON to temp file on target
+          ansible.windows.win_copy:
+            content: "{{ _cff_output | to_nice_json }}"
+            dest: "{{ (_win_temp.output | first | trim) }}\\compliance-cff-{{ _scan_id }}.json"
+          check_mode: false
+
+        - name: Fetch CFF JSON back to execution node
+          ansible.builtin.fetch:
+            src: "{{ (_win_temp.output | first | trim) }}\\compliance-cff-{{ _scan_id }}.json"
+            dest: "{{ fetch_dest_dir }}/cff-{{ inventory_hostname }}.json"
+            flat: true
+
+      always:
+        - name: Clean up CFF temp file on target
+          ansible.windows.win_file:
+            path: "{{ (_win_temp.output | default(['C:\\Windows\\Temp']) | first | trim) }}\\compliance-cff-{{ _scan_id }}.json"
+            state: absent
+          failed_when: false
+
+        - name: Clean up DSC result file on target
+          ansible.windows.win_file:
+            path: "{{ (_win_temp.output | default(['C:\\Windows\\Temp']) | first | trim) }}\\compliance-dsc-result.json"
+            state: absent
+          failed_when: false
+
+        - name: Clean up MOF directory on target
+          ansible.windows.win_file:
+            path: "{{ (_mof_info.MofDir | default('C:\\Windows\\Temp\\StigMof-none')) }}"
+            state: absent
+          failed_when: false
+          when: _mof_info is defined
+
+        - name: Clean up PowerSTIG module (if ephemerally installed)
+          ansible.windows.win_powershell:
+            script: |
+              Remove-Module -Name PowerSTIG -Force -ErrorAction SilentlyContinue
+              Uninstall-Module -Name PowerSTIG -AllVersions -Force -ErrorAction SilentlyContinue
+          when: _powerstig_was_installed | default(false) | bool
+          failed_when: false
+
+    - name: Report scan status
+      ansible.builtin.debug:
+        msg: >-
+          PowerSTIG scan complete on {{ inventory_hostname }}.
+          {{ _powerstig_parsed.CompliantCount | default(0) }}/{{ _powerstig_parsed.TotalResources | default(0) }} compliant.
+          CFF fetched to {{ fetch_dest_dir }}/cff-{{ inventory_hostname }}.json.
+
+
+# ── Play 2: Normalize CFF to NDJSON on execution node ─────────────────
+# Converts per-host CFF JSON to NDJSON for streaming to the compliance API.
+# Uses the normalize_powerstig module to keep findings out of Jinja2
+# variable space (ADR-033 OOM prevention).
+
+- name: "Compliance: Normalize PowerSTIG results"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    fetch_dest_dir: /tmp/compliance-results
+
+  tasks:
+    - name: Find all fetched CFF JSON files
+      ansible.builtin.find:
+        paths: "{{ fetch_dest_dir }}"
+        patterns: "cff-*.json"
+      register: _cff_files
+
+    - name: Fail if no results found
+      ansible.builtin.fail:
+        msg: >-
+          No CFF result files found in {{ fetch_dest_dir }}.
+          Ensure the PowerSTIG scan play completed successfully.
+      when: _cff_files.files | length == 0
+
+    - name: Locate rules metadata file
+      ansible.builtin.find:
+        paths: "{{ (role_path | default(playbook_dir)) + '/../rules' }}"
+        patterns: "*.yml"
+      register: _rules_files
+      failed_when: false
+
+    - name: Compose NDJSON from CFF results
+      security.compliance_windows.normalize_powerstig:
+        cff_files: "{{ _cff_files.files | map(attribute='path') | sort | list }}"
+        output_dir: "{{ fetch_dest_dir }}"
+        scan_id: "{{ scan_id | default('') }}"
+        ingest_token: "{{ ingest_token | default('') }}"
+        finalize_last: true
+        certification_status: uncertified
+        certification_authority: ""
+        rules_metadata_file: "{{ (_rules_files.files | default([]) | first | default({})).path | default('') }}"
+      register: _normalized
+      when: scan_id | default('') | length > 0
+
+    - name: Find per-host NDJSON files
+      ansible.builtin.find:
+        paths: "{{ fetch_dest_dir }}"
+        patterns: "*.ndjson"
+      register: _post_body_files
+      when: backstage_api_url | default('') | length > 0
+
+    - name: Stream NDJSON findings per-host to compliance API
+      ansible.builtin.uri:
+        url: "{{ backstage_api_url }}/api/compliance/findings/ingest"
+        method: POST
+        src: "{{ item.path }}"
+        headers:
+          Content-Type: application/x-ndjson
+          Authorization: "Bearer {{ ingest_token | default('') }}"
+        status_code: [201]
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
+        timeout: 120
+      no_log: true
+      loop: "{{ _post_body_files.files | default([]) | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when:
+        - backstage_api_url | default('') | length > 0
+        - scan_id | default('') | length > 0
+      register: _post_results
+      failed_when: false
+
+    - name: Fail if no findings were ingested
+      ansible.builtin.fail:
+        msg: >-
+          All {{ _post_body_files.files | length }} POST requests failed.
+          Check the POST task output above for HTTP status codes.
+      when:
+        - backstage_api_url | default('') | length > 0
+        - _post_body_files.files | default([]) | length > 0
+        - _post_results.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 201) | list | length == 0
+
+    - name: Report results
+      ansible.builtin.debug:
+        msg: >-
+          Normalized {{ _cff_files.files | length }} hosts
+          ({{ _normalized.total_findings | default(0) }} findings).
+          {% if backstage_api_url | default('') | length > 0 %}
+          POSTed {{ _post_results.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 201) | list | length }}/{{ _post_body_files.files | default([]) | length }} to {{ backstage_api_url }}.
+          {% endif %}
+...

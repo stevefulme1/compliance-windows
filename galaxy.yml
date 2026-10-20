@@ -28,9 +28,16 @@ issues: https://github.com/stevefulme1/compliance-windows/issues
 dependencies:
   infra.windows_ops: ">=2.0.1"
   ansible.windows: ">=2.0.0"
+  community.windows: ">=3.0.0"
 build_ignore:
   - .git
   - .github
   - .gitignore
   - tests
+  - ee
+  - docs
+  - scripts
+  - tasks
+  - install.yml
+  - uninstall.yml
   - "*.tar.gz"

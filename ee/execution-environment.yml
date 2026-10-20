@@ -1,0 +1,74 @@
+---
+# Execution Environment: Windows Server Compliance (unified)
+#
+# Supports both scanner backends in a single EE:
+#   - DISA SCC (default): SCAP 1.3 certified, portable download at scan time
+#   - PowerSTIG (secondary, domain-joined only): DSC-based scanning
+#
+# Also supports CIS scanning via infra.windows_ops.
+#
+# PowerSTIG is a Windows PowerShell module installed on the TARGET, not here.
+# DISA SCC is NOT embedded (legal: trade secret licensing) — downloaded at
+# scan time from dl.dod.cyber.mil. SCAP benchmarks ARE embedded (public domain).
+#
+# Build:
+#   ansible-builder build -f execution-environment.yml \
+#     -t compliance-windows:latest -v3
+
+version: 3
+
+build_arg_defaults:
+  ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: ''
+
+options:
+  package_manager_path: /usr/bin/microdnf
+
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform-26/ee-minimal-rhel9:latest
+
+dependencies:
+  galaxy:
+    collections:
+      - name: ansible.windows
+        version: ">=2.0.0"
+      - name: community.windows
+        version: ">=3.0.0"
+      # infra.windows_ops is injected via prepend_galaxy COPY step
+      # (not available on public Galaxy, requires Automation Hub auth)
+  python:
+    - pywinrm>=0.4.3
+    - requests-credssp>=2.0.0
+    - requests-ntlm>=1.2.0
+
+additional_build_steps:
+  prepend_galaxy:
+    - COPY _build/collections/ /usr/share/ansible/collections/
+
+  prepend_final:
+    # Tools for SCC portable extraction at scan time
+    # curl-minimal is already in the base image; only unzip is needed
+    - RUN microdnf install -y unzip && microdnf clean all
+
+    # Pre-bake SCAP benchmarks (public domain, freely redistributable)
+    # Source: https://github.com/niwc-atlantic/scap-content-library
+    - RUN mkdir -p /usr/share/scap/windows
+    - COPY _build/scap-content/ /usr/share/scap/windows/
+
+  append_final:
+    # Verify all collections
+    - RUN ansible-galaxy collection list security.compliance_windows
+    - RUN ansible-galaxy collection list ansible.windows
+    - RUN ansible-galaxy collection list community.windows
+    - RUN ansible-galaxy collection list infra.windows_ops
+
+    # Verify WinRM connectivity deps
+    - RUN python3 -c "import winrm; print('pywinrm OK')"
+    - RUN python3 -c "import requests_credssp; print('credssp OK')"
+    - RUN python3 -c "import requests_ntlm; print('ntlm OK')"
+
+    # Verify SCC download tools
+    - RUN unzip -v | head -1
+
+    # Verify SCAP content
+    - RUN test -d /usr/share/scap/windows/

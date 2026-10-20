@@ -1,0 +1,86 @@
+---
+# Disconnect DISA STIG Windows Server compliance profile
+#
+# Usage:
+#   ansible-playbook uninstall.yml -e aap_host=https://controller.example.com -e aap_token=<token>
+#
+# This playbook:
+#   1. Marks the profile as "disconnected" in the compliance backend
+#      (all historical findings/scans/snapshots are preserved for audit)
+#   2. Removes Controller resources (all possible scan JTs + remediation JT)
+#
+# The uninstall removes all known JT names regardless of which scanner_mode
+# was used during installation. Missing JTs are silently ignored (404 tolerance).
+# The profile can be reconnected at any time by running install.yml again.
+
+- name: "Disconnect: DISA STIG Windows Server Compliance Profile"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    aap_host: "{{ lookup('env', 'AAP_HOST') }}"
+    aap_token: "{{ lookup('env', 'AAP_API_TOKEN') }}"
+    backstage_api_url: "{{ lookup('env', 'BACKSTAGE_API_URL') | default('', true) }}"
+    backstage_token: "{{ lookup('env', 'BACKSTAGE_TOKEN') | default('', true) }}"
+    profile_id: "{{ compliance_profile_id | default('') }}"
+    profile_framework: "DISA_STIG"
+
+    jt_names_to_remove:
+      - "compliance-scan-stig-windows"
+      - "compliance-scan-stig-windows-scc"
+      - "compliance-remediate-stig-windows"
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - aap_host | length > 0
+          - aap_token | length > 0
+        fail_msg: "Set AAP_HOST and AAP_API_TOKEN environment variables"
+
+    - name: Disconnect profile in compliance backend
+      when: backstage_api_url | length > 0
+      block:
+        - name: Mark profile as disconnected
+          ansible.builtin.uri:
+            url: "{{ backstage_api_url }}/api/compliance/profiles/disconnect"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ backstage_token }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              framework: "{{ profile_framework }}"
+              profileId: "{{ profile_id }}"
+            validate_certs: "{{ aap_validate_certs | default(false) }}"
+            status_code: [200, 204, 404]
+          no_log: true
+          register: _disconnect_result
+
+        - name: Remove custom tab bundle (if any)
+          ansible.builtin.uri:
+            url: "{{ backstage_api_url }}/api/compliance/profiles/{{ profile_id }}/bundle"
+            method: DELETE
+            headers:
+              Authorization: "Bearer {{ backstage_token }}"
+            validate_certs: "{{ aap_validate_certs | default(false) }}"
+            status_code: [200, 204, 404]
+          no_log: true
+          when: profile_id | length > 0
+
+    - name: Look up and delete Controller job templates
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/tasks/_delete_jt.yml"
+      loop: "{{ jt_names_to_remove }}"
+      loop_control:
+        loop_var: _jt_name
+
+    - name: Report disconnection result
+      ansible.builtin.debug:
+        msg: |
+          === DISA STIG Windows Server Profile Disconnected ===
+          Backend: {{ 'disconnected' if (_disconnect_result.status | default(0)) in [200, 204] else 'skipped' }}
+          Controller: attempted removal of {{ jt_names_to_remove | length }} JTs
+          Historical data: PRESERVED (findings, scans, snapshots retained for audit)
+          To reconnect: run install.yml again

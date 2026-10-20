@@ -1,0 +1,237 @@
+---
+# Register Windows Server DISA STIG compliance profile on AAP Controller
+#
+# Usage:
+#   ansible-playbook install.yml -e aap_host=https://controller.example.com -e aap_token=<token>
+#   ansible-playbook install.yml -e aap_host=... -e aap_token=... -e scanner=scc
+#   ansible-playbook install.yml -e aap_host=... -e aap_token=... -e scanner=both
+#
+# Scanner modes (set via -e scanner=<mode>):
+#   scc (default)       — SCAP 1.3 certified, portable SCC at scan time, recommended
+#   powerstig           — DSC-based scanning, domain-joined hosts only
+#   both                — creates both scan JTs, shared remediation JT
+#
+# See docs/scanner-selection-guide.md for guidance on choosing a scanner.
+
+- name: "Install: DISA STIG Windows Server Profile"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    aap_host: "{{ lookup('env', 'AAP_HOST') }}"
+    aap_token: "{{ lookup('env', 'AAP_API_TOKEN') }}"
+    backstage_api_url: "{{ lookup('env', 'BACKSTAGE_API_URL') | default('', true) }}"
+    backstage_token: "{{ lookup('env', 'BACKSTAGE_TOKEN') | default('', true) }}"
+    org_name: "{{ organization | default('Default') }}"
+    project_name: "{{ project | default('compliance-profile-windows') }}"
+    ee_name: "{{ execution_environment | default('compliance-windows') }}"
+    inventory_name: "{{ inventory | default('compliance-windows-inventory') }}"
+
+    scanner_mode: "{{ scanner | default('scc') }}"
+
+    profile_base:
+      slug: "windows-server-stig"
+      name: "DISA STIG Windows Server"
+      framework: "DISA_STIG"
+      version: "V2R7"
+      platform: "Windows Server 2019/2022/2025"
+      os_family: ["Windows"]
+      os_version: ["10"]
+      remediate_jt_name: "compliance-remediate-stig-windows"
+      remediate_playbook: "playbooks/remediate-windows-stig.yml"
+      display_config:
+        gauge_label: "compliance rate"
+        gauge_unit: "rules"
+        remediation_verb: "Remediate"
+        severity_map:
+          CAT_I: "CAT I (High)"
+          CAT_II: "CAT II (Medium)"
+          CAT_III: "CAT III (Low)"
+        columns:
+          - { field: "stig_id", label: "STIG ID" }
+          - { field: "title", label: "Title" }
+          - { field: "severity", label: "Severity" }
+          - { field: "status", label: "Status" }
+          - { field: "fix_text", label: "Fix" }
+        tabs:
+          - label: "Windows STIG"
+            icon: "security"
+            layout:
+              - { widget: "summary_card", title: "Compliance Summary", metric: "compliance_rate" }
+              - { widget: "severity_breakdown", group_by: "severity" }
+              - { widget: "findings_table", title: "STIG Findings" }
+              - { widget: "host_breakdown", title: "Host Compliance Status" }
+          - label: "HIPAA Crosswalk"
+            icon: "health_and_safety"
+            layout:
+              - { widget: "crosswalk_summary", title: "HIPAA Control Coverage", crosswalk_profile: "hipaa" }
+              - { widget: "crosswalk_controls_table", title: "HIPAA Control Mapping", crosswalk_profile: "hipaa" }
+          - label: "PCI-DSS Crosswalk"
+            icon: "payment"
+            layout:
+              - { widget: "crosswalk_summary", title: "PCI-DSS Control Coverage", crosswalk_profile: "pci_dss_v4" }
+              - { widget: "crosswalk_controls_table", title: "PCI-DSS Control Mapping", crosswalk_profile: "pci_dss_v4" }
+
+    scanners:
+      powerstig:
+        scanner: "powerstig"
+        scan_jt_name: "compliance-scan-stig-windows"
+        scan_playbook: "playbooks/run_powerstig.yml"
+        description: >-
+          DISA STIG compliance scanning for Windows Server using PowerSTIG DSC.
+          No external downloads required. Recommended for daily operations.
+        certification_status: "uncertified"
+        certification_authority: ""
+        certification_disclaimer: >-
+          PowerSTIG uses DSC (Desired State Configuration) modules for compliance
+          checking. Results are not SCAP-validated but provide comprehensive STIG
+          coverage with scan and remediation symmetry.
+      scc:
+        scanner: "scc"
+        scan_jt_name: "compliance-scan-stig-windows-scc"
+        scan_playbook: "playbooks/run_scc.yml"
+        description: >-
+          DISA STIG compliance scanning for Windows Server using DISA SCC
+          (SCAP 1.3 Validated). SCC is downloaded at scan time from dl.dod.cyber.mil.
+        certification_status: "certified"
+        certification_authority: "SCAP 1.3"
+        certification_disclaimer: >-
+          DISA SCC (SCAP Compliance Checker) is NIST SCAP 1.3 validated. Scan results
+          are accepted for DISA STIG compliance assessments. SCC is downloaded
+          ephemerally from dl.dod.cyber.mil at scan time.
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - aap_host | length > 0
+          - aap_token | length > 0
+          - scanner_mode in ['powerstig', 'scc', 'both']
+        fail_msg: >-
+          Set AAP_HOST and AAP_API_TOKEN environment variables.
+          scanner_mode must be 'scc' (default), 'powerstig', or 'both'.
+
+    - name: Load crosswalk definitions
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/compliance_profiles/{{ item }}.yml"
+        name: "_crosswalk_{{ item }}"
+      loop:
+        - hipaa
+        - pci_dss_v4
+
+    - name: Build display config with crosswalks
+      ansible.builtin.set_fact:
+        _display_config: >-
+          {{ profile_base.display_config | combine({
+               'crosswalks': {
+                 'hipaa': _crosswalk_hipaa,
+                 'pci_dss_v4': _crosswalk_pci_dss_v4
+               }
+             })
+          }}
+
+    - name: Determine scanners to install
+      ansible.builtin.set_fact:
+        _active_scanners: >-
+          {{ ['powerstig', 'scc'] if scanner_mode == 'both'
+             else [scanner_mode] }}
+
+    - name: Create assessment job template(s)
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ scanners[item].scan_jt_name }}"
+          organization: "{{ org_name }}"
+          project: "{{ project_name }}"
+          playbook: "{{ scanners[item].scan_playbook }}"
+          inventory: "{{ inventory_name }}"
+          become_enabled: false
+          ask_variables_on_launch: true
+          ask_inventory_on_launch: true
+          use_fact_cache: true
+          extra_vars: >-
+            {{ {
+              'profile_slug': profile_base.slug,
+              'profile_name': profile_base.name,
+              'framework': profile_base.framework,
+              'version': profile_base.version,
+              'description': scanners[item].description,
+              'certification_status': scanners[item].certification_status,
+              'certification_authority': scanners[item].certification_authority,
+              'certification_disclaimer': scanners[item].certification_disclaimer,
+              'remediate_jt_name': profile_base.remediate_jt_name,
+              'platform': profile_base.platform,
+              'scanner': scanners[item].scanner,
+              'os_family': profile_base.os_family,
+              'os_version': profile_base.os_version,
+              'display_config': _display_config
+            } | to_json }}
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
+        status_code: [200, 201]
+      no_log: true
+      loop: "{{ _active_scanners }}"
+      loop_control:
+        label: "{{ scanners[item].scan_jt_name }}"
+      register: _scan_jts
+      failed_when: false
+
+    - name: Create remediation job template
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ profile_base.remediate_jt_name }}"
+          organization: "{{ org_name }}"
+          project: "{{ project_name }}"
+          playbook: "{{ profile_base.remediate_playbook }}"
+          inventory: "{{ inventory_name }}"
+          ask_variables_on_launch: true
+          ask_inventory_on_launch: true
+          ask_tags_on_launch: true
+          ask_limit_on_launch: true
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
+        status_code: [200, 201]
+      no_log: true
+      register: _remediate_jt
+      failed_when: false
+
+    - name: Reconnect profile in compliance backend (if available)
+      when: backstage_api_url | length > 0
+      ansible.builtin.uri:
+        url: "{{ backstage_api_url }}/api/compliance/profiles/connect"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ backstage_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          framework: "{{ profile_base.framework }}"
+          version: "{{ profile_base.version }}"
+          displayName: "{{ profile_base.name }}"
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
+        status_code: [200, 201]
+      no_log: true
+      register: _backend_connect
+      failed_when: false
+
+    - name: Report installation result
+      ansible.builtin.debug:
+        msg: |
+          === {{ profile_base.name }} Profile Installed ===
+          Scanner mode: {{ scanner_mode }}
+          {% for s in _active_scanners %}
+          Scan JT: {{ scanners[s].scan_jt_name }} ({{ scanners[s].scanner }})
+          {% endfor %}
+          Remediation JT: {{ profile_base.remediate_jt_name }}
+          Framework: {{ profile_base.framework }} {{ profile_base.version }}
+          Backend: {{ 'reconnected' if (_backend_connect.status | default(0)) in [200, 201] else 'skipped' }}
