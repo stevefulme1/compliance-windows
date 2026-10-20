@@ -4,11 +4,12 @@ The XCCDF normalizer is the PRIMARY scanner path -- DISA SCC is the default
 scanner for Windows STIG compliance.  These tests cover the full API surface
 of normalize_common.py as consumed through normalize_xccdf.py.
 """
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
 
 import json
 import os
 import sys
-import pytest
 from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
@@ -171,9 +172,9 @@ class TestParseXccdfResults:
         """Parse a minimal valid XCCDF 1.2 document with pass/fail results."""
         rules = (
             _rule_xml('rule_pass', severity='medium', title='Pass Rule',
-                       stig_id='V-100001')
+                      stig_id='V-100001')
             + _rule_xml('rule_fail', severity='high', title='Fail Rule',
-                         stig_id='V-100002')
+                        stig_id='V-100002')
         )
         results = (
             _rule_result_xml('rule_pass', 'pass', 'medium')
@@ -240,7 +241,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-sev.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath)
+        _host, findings = parse_xccdf_results(filepath)
         by_id = {f['rule_id']: f for f in findings}
 
         assert by_id['r_high']['severity'] == 'CAT_I'
@@ -260,7 +261,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-status.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath)
+        _host, findings = parse_xccdf_results(filepath)
         by_id = {f['rule_id']: f for f in findings}
 
         assert by_id['r_pass']['status'] == 'pass'
@@ -285,7 +286,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-skip.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath)
+        _host, findings = parse_xccdf_results(filepath)
 
         assert len(findings) == 1
         assert findings[0]['rule_id'] == 'r_keep'
@@ -303,7 +304,7 @@ class TestParseXccdfResults:
         filepath = _write_xccdf(
             tmp_path, 'xccdf-results-webserver-prod-01.xml', xml
         )
-        host, _ = parse_xccdf_results(filepath)
+        host, _findings = parse_xccdf_results(filepath)
         assert host == 'webserver-prod-01'
 
     def test_host_extraction_fallback(self, tmp_path):
@@ -313,7 +314,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
 
         filepath = _write_xccdf(tmp_path, 'scan-output.xml', xml)
-        host, _ = parse_xccdf_results(filepath)
+        host, _findings = parse_xccdf_results(filepath)
         assert host == 'scan-output.xml'
 
     def test_framework_disa_stig_prefers_stig_id(self, tmp_path):
@@ -325,7 +326,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-disa.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath, framework='DISA_STIG')
+        _host, findings = parse_xccdf_results(filepath, framework='DISA_STIG')
 
         assert findings[0]['stig_id'] == 'V-254244'
 
@@ -338,7 +339,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-cis.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath, framework='CIS')
+        _host, findings = parse_xccdf_results(filepath, framework='CIS')
 
         assert findings[0]['stig_id'] == '1.1.1'
 
@@ -357,7 +358,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules_both + rules_cis_only, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-auto.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath, framework='auto')
+        _host, findings = parse_xccdf_results(filepath, framework='auto')
         by_id = {f['rule_id']: f for f in findings}
 
         assert by_id['r_both']['stig_id'] == 'V-254244'
@@ -370,7 +371,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-h1.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath, scanner_name='scc')
+        _host, findings = parse_xccdf_results(filepath, scanner_name='scc')
 
         assert findings[0]['scanner'] == 'scc'
 
@@ -381,7 +382,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-h2.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath)
+        _host, findings = parse_xccdf_results(filepath)
 
         assert findings[0]['scanner'] == 'openscap'
 
@@ -393,7 +394,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-vd.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath)
+        _host, findings = parse_xccdf_results(filepath)
 
         assert findings[0]['description'] == 'This is the real description.'
 
@@ -404,7 +405,7 @@ class TestParseXccdfResults:
         xml = _xccdf_doc(rules, results)
         filepath = _write_xccdf(tmp_path, 'xccdf-results-ev.xml', xml)
 
-        _, findings = parse_xccdf_results(filepath)
+        _host, findings = parse_xccdf_results(filepath)
 
         ev = findings[0]['evidence']
         assert ev['actual'] == 'fail'
@@ -502,13 +503,13 @@ class TestRunNormalize:
     """Tests for run_normalize() -- the main entry point."""
 
     def _make_single_host_xccdf(self, tmp_path, hostname='server01',
-                                 scanner_name='openscap'):
+                                scanner_name='openscap'):
         """Helper: create one XCCDF file with 2 findings (pass + fail)."""
         rules = (
             _rule_xml('r_pass', severity='low', title='Pass Rule',
-                       stig_id='V-100001')
+                      stig_id='V-100001')
             + _rule_xml('r_fail', severity='high', title='Fail Rule',
-                         stig_id='V-100002')
+                        stig_id='V-100002')
         )
         results = (
             _rule_result_xml('r_pass', 'pass', 'low')

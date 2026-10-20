@@ -1,0 +1,2 @@
+scripts/build-ee.sh shebang!skip
+scripts/generate_rules_metadata.py shebang!skip

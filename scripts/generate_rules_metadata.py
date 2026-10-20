@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Generate rules metadata YAML from infra.windows_ops task files.
 
@@ -108,6 +107,7 @@ def resolve_template(value, defaults: dict):
     """Replace {{ var_name }} (with optional Jinja filters) with defaults."""
     if not isinstance(value, str):
         return value
+
     def _replace(m):
         var_name = m.group(1)
         if var_name in defaults:
@@ -259,7 +259,7 @@ def parse_flat_list(filepath: str, category: str) -> list[dict]:
         logger.warning("No set_fact variable found in %s", filepath)
         return []
 
-    _, value = result
+    _var_name, value = result
     if not isinstance(value, list):
         logger.warning("set_fact value is not a list in %s", filepath)
         return []
@@ -287,7 +287,7 @@ def parse_nested(filepath: str, category: str) -> list[dict]:
     if result is None and category == "system_services":
         result = _find_set_fact_var(data, "windows_manage_stig_features_to_remove")
         if result is not None:
-            _, value = result
+            _var_name, value = result
             if isinstance(value, list):
                 return value
             logger.warning("features_to_remove value is not a list in %s", filepath)
@@ -297,7 +297,7 @@ def parse_nested(filepath: str, category: str) -> list[dict]:
         logger.warning("No set_fact variable found in %s", filepath)
         return []
 
-    _, value = result
+    _var_name, value = result
     if not isinstance(value, dict):
         # Could be a flat list (some versions)
         if isinstance(value, list):

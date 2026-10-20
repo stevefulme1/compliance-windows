@@ -1,8 +1,9 @@
 """Unit tests for compliance_evaluate module."""
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
 
 import os
 import sys
-import pytest
 from unittest.mock import MagicMock
 
 # Add collection root to path so we can import plugins directly
@@ -14,7 +15,7 @@ sys.modules.setdefault("ansible", MagicMock())
 sys.modules.setdefault("ansible.module_utils", MagicMock())
 sys.modules.setdefault("ansible.module_utils.basic", MagicMock())
 
-from plugins.modules.compliance_evaluate import evaluate_single_rule, _map_severity, OPERATORS
+from plugins.modules.compliance_evaluate import evaluate_single_rule
 
 
 class TestComplianceEvaluate:

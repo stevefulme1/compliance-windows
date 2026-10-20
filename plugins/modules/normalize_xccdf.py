@@ -1,9 +1,10 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
 # GNU General Public License v3.0+
 
-DOCUMENTATION = r'''
+from __future__ import absolute_import, division, print_function
+
+__metaclass__ = type
+
+DOCUMENTATION = r"""
 ---
 module: normalize_xccdf
 short_description: Normalize XCCDF results to common compliance findings format
@@ -62,11 +63,44 @@ options:
     required: false
     default: openscap
     version_added: "0.1.0"
+  compose_post_body:
+    description: Whether to compose an NDJSON POST body alongside JSON output.
+    type: bool
+    required: false
+    default: false
+    version_added: "0.1.0"
+  finalize:
+    description: Whether to append a finalize record to the NDJSON output.
+    type: bool
+    required: false
+    default: false
+    version_added: "0.1.0"
+  ingest_token:
+    description:
+      - Bearer token for the compliance ingest API.
+      - This value is treated as sensitive and will not be logged.
+    type: str
+    required: false
+    default: ""
+    version_added: "0.1.0"
+  post_body_format:
+    description: Format for the POST body (json or ndjson).
+    type: str
+    required: false
+    default: ndjson
+    choices: [json, ndjson]
+    version_added: "0.1.0"
+  scan_id:
+    description: Unique scan identifier to embed in normalized output.
+    type: str
+    required: false
+    default: ""
+    version_added: "0.1.0"
 author:
   - Ansible Security Team (@ansible)
-'''
+"""
 
-EXAMPLES = r'''
+EXAMPLES = r"""
 - name: Normalize SCC XCCDF results
   security.compliance_windows.normalize_xccdf:
     results_files:
@@ -84,9 +118,9 @@ EXAMPLES = r'''
       - /tmp/scan-results/xccdf-results-webserver01.xml
     output_file: /tmp/compliance-report.json
   register: normalized
-'''
+"""
 
-RETURN = r'''
+RETURN = r"""
 hosts_processed:
   description: Number of hosts whose results were normalized
   returned: always
@@ -107,7 +141,7 @@ findings:
   description: Slim findings list for Controller job events
   returned: always
   type: list
-'''
+"""
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.security.compliance_windows.plugins.module_utils.normalize_common import (
@@ -124,5 +158,5 @@ def main():
     run_normalize(module)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
