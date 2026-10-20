@@ -505,6 +505,11 @@
           Normalized {{ _cff_files.files | length }} hosts
           ({{ _normalized.total_findings | default(0) }} findings).
           {% if backstage_api_url | default('') | length > 0 %}
-          POSTed {{ _post_results.results | default([]) | selectattr('status', 'defined') | selectattr('status', 'equalto', 201) | list | length }}/{{ _post_body_files.files | default([]) | length }} to {{ backstage_api_url }}.
+          POSTed {{ _post_results.results | default([])
+          | selectattr('status', 'defined')
+          | selectattr('status', 'equalto', 201)
+          | list | length }}/{{
+          _post_body_files.files | default([])
+          | length }} to {{ backstage_api_url }}.
           {% endif %}
 ...
